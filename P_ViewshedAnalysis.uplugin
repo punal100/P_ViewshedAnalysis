@@ -1,0 +1,32 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "ViewShed Analysis Plugin",
+	"Description": "ViewShed and Visibility Analysis Plugin for Large Scale Environments",
+	"Category": "Analysis",
+	"CreatedBy": "Punal Manalan",
+	"CreatedByURL": "https://github.com/punal100/P_ViewshedAnalysis",
+	"DocsURL": "https://github.com/punal100/P_ViewshedAnalysis",
+	"MarketplaceURL": "",
+	"SupportURL": "https://github.com/punal100/P_ViewshedAnalysis",
+	"EngineVersion": "5.2.0",
+	"CanContainContent": true,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "P_ViewshedAnalysis",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ProceduralMeshComponent",
+			"Enabled": true
+		}
+	]
+}
