@@ -7,9 +7,9 @@
 using UnrealBuildTool;
 
 // Build configuration for the ViewShed Analysis runtime module
-public class P_P_ViewshedAnalysis : ModuleRules
+public class P_ViewshedAnalysis : ModuleRules
 {
-	public P_P_ViewshedAnalysis(ReadOnlyTargetRules Target) : base(Target)
+	public P_ViewshedAnalysis(ReadOnlyTargetRules Target) : base(Target)
 	{
 		// Use explicit precompiled headers for better performance
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;

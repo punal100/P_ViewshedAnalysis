@@ -9,6 +9,7 @@
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 /**
  * Constructor - Initialize default values and create components
@@ -34,6 +35,8 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     Debug_VisiblePointsISMC->SetMobility(EComponentMobility::Movable);
     // Set Translation to World Absolute
     Debug_VisiblePointsISMC->SetUsingAbsoluteLocation(true);
+    // Exclude from receiving decals (so our own decal doesn't paint our markers)
+    Debug_VisiblePointsISMC->SetReceivesDecals(false);
     // Set Rotation to World Absolute
     Debug_VisiblePointsISMC->SetUsingAbsoluteRotation(true);
 
@@ -49,6 +52,8 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     Debug_HiddenPointsISMC->SetMobility(EComponentMobility::Movable);
     // Set Translation to World Absolute
     Debug_HiddenPointsISMC->SetUsingAbsoluteLocation(true);
+    // Exclude from receiving decals
+    Debug_HiddenPointsISMC->SetReceivesDecals(false);
     // Set Rotation to World Absolute
     Debug_HiddenPointsISMC->SetUsingAbsoluteRotation(true);
 
@@ -64,6 +69,21 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     Debug_ProceduralMeshComponent->SetMobility(EComponentMobility::Movable);
     // Set Translation to World Absolute
     Debug_ProceduralMeshComponent->SetUsingAbsoluteLocation(true);
+    // Exclude from receiving decals
+    Debug_ProceduralMeshComponent->SetReceivesDecals(false);
+
+    // Create the hidden visualization decal component
+    HiddenVisualizationDecalComponent = CreateDefaultSubobject<UDecalComponent>(TEXT("HiddenVisualizationDecal"));
+    HiddenVisualizationDecalComponent->SetupAttachment(RootComponent);
+    HiddenVisualizationDecalComponent->SetUsingAbsoluteLocation(true);
+    HiddenVisualizationDecalComponent->SetUsingAbsoluteRotation(true);
+    HiddenVisualizationDecalComponent->SetUsingAbsoluteScale(true);
+    HiddenVisualizationDecalComponent->SetVisibility(true);
+    // Ensure decal does not fade away on distance and renders above others by default
+    HiddenVisualizationDecalComponent->FadeScreenSize = 0.0f;
+    HiddenVisualizationDecalComponent->SortOrder = 100;
+    // Reasonable default size; will be overridden each tick from FOV/MaxDistance
+    HiddenVisualizationDecalComponent->DecalSize = FVector(1000.f, 500.f, 500.f);
     // Set Rotation to World Absolute
     Debug_ProceduralMeshComponent->SetUsingAbsoluteRotation(true);
 
@@ -131,6 +151,13 @@ void ACPP_Actor__Viewshed::BeginPlay()
         Debug_HiddenPointsISMC->SetMaterial(0, HiddenMaterial);
     }
 
+    // Initialize decal MID if a decal base material is provided
+    if (HiddenVisualizationDecalComponent && HiddenVisualizationDecalMaterial)
+    {
+        HiddenVisualizationDecalMID = UMaterialInstanceDynamic::Create(HiddenVisualizationDecalMaterial, this);
+        HiddenVisualizationDecalComponent->SetDecalMaterial(HiddenVisualizationDecalMID);
+    }
+
     // Start initial analysis if auto-update is enabled
     if (bAutoUpdate)
     {
@@ -196,6 +223,9 @@ void ACPP_Actor__Viewshed::Tick(float DeltaTime)
             OnAnalysisComplete.Broadcast(AnalysisResults);
         }
     }
+
+    // Keep decal aligned with the viewshed origin and frustum parameters every frame
+    UpdateHiddenVisualizationDecal();
 }
 
 /**
@@ -720,6 +750,59 @@ void ACPP_Actor__Viewshed::DrawDebugPyramid() const
     // Draw center line (view direction)
     FVector CenterEnd = ObserverLoc + ForwardDir * MaxDistance;
     DrawDebugLine(GetWorld(), ObserverLoc, CenterEnd, FColor::Yellow, false, -1, 0, 4.0f);
+}
+
+void ACPP_Actor__Viewshed::UpdateHiddenVisualizationDecal()
+{
+    if (!HiddenVisualizationDecalComponent)
+    {
+        return;
+    }
+
+    const FVector Origin = GetObserverLocation();
+    const FVector Forward = GetActorForwardVector().GetSafeNormal();
+    FVector Up = GetActorUpVector().GetSafeNormal();
+    const FVector Right = GetActorRightVector().GetSafeNormal();
+    // Re-orthonormalize Up in case of near-colinearity with Forward
+    Up = FVector::CrossProduct(Right, Forward).GetSafeNormal();
+
+    // Align decal so X+ projects forward
+    const FRotator DecalRot = FRotationMatrix::MakeFromXZ(Forward, Up).Rotator();
+    // Place the projector mid-way along the frustum depth so the box spans from origin to far plane
+    // UE decals use a box centered on the component location; X is depth (half-size), Y/Z are half extents
+    const float HalfDepth = MaxDistance * 0.5f;
+    HiddenVisualizationDecalComponent->SetWorldLocation(Origin + Forward * HalfDepth);
+    HiddenVisualizationDecalComponent->SetWorldRotation(DecalRot);
+
+    // Size decal to encompass the frustum at MaxDistance
+    const float HalfH = FMath::DegreesToRadians(HorizontalFOV * 0.5f);
+    const float HalfV = FMath::DegreesToRadians(VerticalFOV * 0.5f);
+    const float HalfWidthAtFar = MaxDistance * FMath::Tan(HalfH);
+    const float HalfHeightAtFar = MaxDistance * FMath::Tan(HalfV);
+    // Slightly pad the projector to avoid edge clipping
+    const float Pad = 1.02f;
+    HiddenVisualizationDecalComponent->DecalSize = FVector(HalfDepth * Pad, HalfWidthAtFar * Pad, HalfHeightAtFar * Pad);
+
+    // Feed runtime parameters to the decal material (shader should test frustum and normal dot)
+    if (HiddenVisualizationDecalMID)
+    {
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_MaxDistance"), MaxDistance);
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_VertFOVDeg"), VerticalFOV);
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_HorizFOVDeg"), HorizontalFOV);
+        HiddenVisualizationDecalMID->SetVectorParameterValue(TEXT("VS_Origin"), FLinearColor(Origin));
+        HiddenVisualizationDecalMID->SetVectorParameterValue(TEXT("VS_Forward"), FLinearColor(Forward));
+        HiddenVisualizationDecalMID->SetVectorParameterValue(TEXT("VS_Right"), FLinearColor(Right));
+        HiddenVisualizationDecalMID->SetVectorParameterValue(TEXT("VS_Up"), FLinearColor(Up));
+        // Additional tunables for the decal material
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_NormalThreshold"), VS_NormalThreshold);
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_FrustumFeather"), VS_FrustumFeather);
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_FacingFeather"), VS_FacingFeather);
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_FacingEnabled"), VS_FacingEnabled);
+        HiddenVisualizationDecalMID->SetVectorParameterValue(TEXT("VS_ColorInside"), VS_ColorInside);
+        HiddenVisualizationDecalMID->SetVectorParameterValue(TEXT("VS_ColorOutside"), VS_ColorOutside);
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_GridIntensity"), VS_GridIntensity);
+        HiddenVisualizationDecalMID->SetScalarParameterValue(TEXT("VS_Opacity"), VS_Opacity);
+    }
 }
 
 /**

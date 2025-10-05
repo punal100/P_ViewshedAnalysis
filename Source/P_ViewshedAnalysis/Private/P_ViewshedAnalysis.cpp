@@ -5,9 +5,13 @@
  */
 
 #include "P_ViewshedAnalysis.h"
+// For shader directory mapping and filesystem checks
+#include "RenderCore.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 
 // Text localization namespace for this module
-#define LOCTEXT_NAMESPACE "FP_ViewShedAnalysisModule"
+#define LOCTEXT_NAMESPACE "FP_ViewshedAnalysisModule"
 
 /**
  * Module startup - called after module is loaded into memory
@@ -15,8 +19,12 @@
  */
 void FP_ViewShedAnalysisModule::StartupModule()
 {
-	// Module startup logic goes here
-	// Currently empty as we don't need special initialization
+	// Map this plugin's Shaders directory so Custom HLSL includes can reference it
+	const FString PluginShaderDir = FPaths::Combine(FPaths::ProjectPluginsDir(), TEXT("P_ViewshedAnalysis/Shaders"));
+	if (IFileManager::Get().DirectoryExists(*PluginShaderDir))
+	{
+		AddShaderSourceDirectoryMapping(TEXT("/Plugin/P_ViewshedAnalysis"), PluginShaderDir);
+	}
 }
 
 /**
@@ -33,4 +41,4 @@ void FP_ViewShedAnalysisModule::ShutdownModule()
 #undef LOCTEXT_NAMESPACE
 
 // Register this module with Unreal's module system
-IMPLEMENT_MODULE(FP_ViewShedAnalysisModule, P_ViewShedAnalysis)
+IMPLEMENT_MODULE(FP_ViewShedAnalysisModule, P_ViewshedAnalysis)

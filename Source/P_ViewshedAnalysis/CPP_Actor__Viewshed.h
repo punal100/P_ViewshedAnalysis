@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 #include "ProceduralMeshComponent.h"
+#include "Components/DecalComponent.h"
 #include "CPP_Actor__ViewShed.generated.h"
 
 /**
@@ -150,6 +151,11 @@ public:
               meta = (DisplayName = "Hidden Material"))
     UMaterialInterface *HiddenMaterial;
 
+    /** Decal material used by HiddenVisualizationDecalComponent (Deferred Decal domain). Should implement frustum tests. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
+              meta = (DisplayName = "Hidden Visualization Decal Material"))
+    UMaterialInterface *HiddenVisualizationDecalMaterial;
+
     //////////////////////////////////////////////////////////////////////////
     // ANALYSIS CONTROL PROPERTIES
     //////////////////////////////////////////////////////////////////////////
@@ -168,6 +174,49 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance",
               meta = (DisplayName = "Max Traces Per Frame", ClampMin = "10", UIMax = "500"))
     int32 MaxTracesPerFrame = 50;
+
+    //////////////////////////////////////////////////////////////////////////
+    // HIDDEN VISUALIZATION DECAL MATERIAL PARAMETERS
+    //////////////////////////////////////////////////////////////////////////
+    /** Surface facing threshold; higher means stricter facing requirement (dot(N, viewDir) >= threshold). Range [-1..1] */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hidden Decal|Material",
+              meta = (DisplayName = "Normal Threshold", ClampMin = "-1.0", ClampMax = "1.0"))
+    float VS_NormalThreshold = 0.0f;
+
+    /** Feather width for frustum edges and distance falloff */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hidden Decal|Material",
+              meta = (DisplayName = "Frustum Feather", ClampMin = "0.0", UIMax = "1.0"))
+    float VS_FrustumFeather = 0.05f;
+
+    /** Feather width for facing threshold */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hidden Decal|Material",
+              meta = (DisplayName = "Facing Feather", ClampMin = "0.0", UIMax = "1.0"))
+    float VS_FacingFeather = 0.1f;
+
+    /** Toggle for facing check (1=enabled, 0=disabled); values in between blend */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hidden Decal|Material",
+              meta = (DisplayName = "Facing Enabled", ClampMin = "0.0", ClampMax = "1.0"))
+    float VS_FacingEnabled = 0.0f;
+
+    /** Color used inside the viewshed mask */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hidden Decal|Material",
+              meta = (DisplayName = "Color Inside"))
+    FLinearColor VS_ColorInside = FLinearColor(1.f, 0.f, 0.f, 1.f);
+
+    /** Color used outside the viewshed mask */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hidden Decal|Material",
+              meta = (DisplayName = "Color Outside"))
+    FLinearColor VS_ColorOutside = FLinearColor(1.f, 1.f, 1.f, 1.f);
+
+    /** Intensity of optional debug grid overlay */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hidden Decal|Material",
+              meta = (DisplayName = "Grid Intensity", ClampMin = "0.0", UIMax = "1.0"))
+    float VS_GridIntensity = 0.2f;
+
+    /** Optional opacity multiplier for the decal material (if implemented in material) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hidden Decal|Material",
+              meta = (DisplayName = "Opacity Multiplier", ClampMin = "0.0", ClampMax = "1.0"))
+    float VS_Opacity = 0.6f;
 
     //////////////////////////////////////////////////////////////////////////
     // DEBUG PROPERTIES
@@ -261,6 +310,10 @@ protected:
     // COMPONENTS
     //////////////////////////////////////////////////////////////////////////
 
+    // Decal component to Paint everything in size box Red (Except Any ISMC and Procedural Mesh which is part of any ACPP_Actor__Viewshed Actor class)
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    UDecalComponent *HiddenVisualizationDecalComponent;
+
     /** Component for rendering visible point instances */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     UInstancedStaticMeshComponent *Debug_VisiblePointsISMC;
@@ -293,6 +346,9 @@ private:
     /** Time when last analysis update occurred */
     float LastUpdateTime = 0.0f;
 
+    /** Dynamic material instance used by the hidden visualization decal to receive runtime parameters */
+    UMaterialInstanceDynamic *HiddenVisualizationDecalMID = nullptr;
+
     //////////////////////////////////////////////////////////////////////////
     // INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////////////////
@@ -311,6 +367,9 @@ private:
 
     /** Update visualization based on current results */
     void UpdateVisualization();
+
+    /** Update or initialize the hidden visualization decal component transform and material parameters */
+    void UpdateHiddenVisualizationDecal();
 
     /** Get the world position of the observer (actor + height offset) */
     FVector GetObserverLocation() const;

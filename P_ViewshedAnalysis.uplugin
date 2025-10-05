@@ -18,6 +18,9 @@
 			"Name": "P_ViewshedAnalysis",
 			"Type": "Runtime",
 			"LoadingPhase": "Default",
+			"AdditionalShaderDirectories": [
+				"Shaders"
+			],
 			"PlatformAllowList": [
 				"Win64"
 			]

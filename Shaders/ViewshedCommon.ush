@@ -1,0 +1,113 @@
+#pragma once
+#ifndef VIEWSHED_COMMON_USH
+#define VIEWSHED_COMMON_USH
+
+// Soft frustum mask with feather near the edges and distance limit
+float FrustumMask(
+    float3 worldPos,
+    float3 origin,
+    float3 right,
+    float3 up,
+    float3 fwd,
+    float  maxDist,
+    float  vertFOVDeg,
+    float  horizFOVDeg,
+    float  feather)
+{
+    float3 V = worldPos - origin;
+    float  dist = length(V);
+    if (dist <= 1e-4) return 1.0;
+
+    float3 L = V / dist;
+
+    float z = dot(L, fwd);
+    if (z <= 0.0) return 0.0;
+
+    float x = dot(L, right);
+    float y = dot(L, up);
+
+    float tanH = tan(radians(horizFOVDeg) * 0.5);
+    float tanV = tan(radians(vertFOVDeg) * 0.5);
+
+    float halfWidth  = z * tanH;
+    float halfHeight = z * tanV;
+
+    // Hard inside test
+    float inside = step(abs(x), halfWidth) * step(abs(y), halfHeight) * step(dist, maxDist);
+
+    // Soft feather near edges and distance
+    float eps = 1e-3;
+    float sx = saturate(1.0 - max(0.0, (abs(x) - halfWidth)  / max(halfWidth,  eps)) / max(feather, eps));
+    float sy = saturate(1.0 - max(0.0, (abs(y) - halfHeight) / max(halfHeight, eps)) / max(feather, eps));
+    float sd = saturate(1.0 - max(0.0, (dist - maxDist)      / max(maxDist,  eps)) / max(feather, eps));
+
+    float soft = min(min(sx, sy), sd);
+
+    return max(inside, soft * inside);
+}
+
+// Normal-facing mask (1 when surface faces the observer above threshold)
+float FacingMask(
+    float3 worldPos,
+    float3 worldNormal,
+    float3 origin,
+    float  normalThreshold,
+    float  feather)
+{
+    float3 V = worldPos - origin;
+    float  dist = length(V);
+    if (dist <= 1e-4) return 1.0;
+
+    float3 viewDir = -V / dist; // direction from surface to observer
+    float  NdotV   = dot(normalize(worldNormal), viewDir);
+
+    float hard = step(normalThreshold, NdotV);
+    float soft = saturate((NdotV - normalThreshold) / max(feather, 1e-3));
+    return max(hard, soft);
+}
+
+// Combined viewshed mask. Returns 0..1 and outputs a local UVW for debug/visuals.
+float ViewshedMask(
+    float3 worldPos,
+    float3 worldNormal,
+    float3 origin,
+    float3 right,
+    float3 up,
+    float3 fwd,
+    float  maxDist,
+    float  vertFOVDeg,
+    float  horizFOVDeg,
+    float  normalThreshold,
+    float  frustumFeather,
+    float  facingFeather,
+    float  facingEnabled,
+    out float3 localUVW)
+{
+    float3 V = worldPos - origin;
+    float  dist = length(V);
+    float3 L = dist > 1e-4 ? V / dist : fwd;
+
+    float z = dot(L, fwd);
+    float x = dot(L, right);
+    float y = dot(L, up);
+
+    float tanH = tan(radians(horizFOVDeg) * 0.5);
+    float tanV = tan(radians(vertFOVDeg) * 0.5);
+
+    float halfWidth  = max(z * tanH, 1e-4);
+    float halfHeight = max(z * tanV, 1e-4);
+
+    // Local UVW within frustum slice at this depth
+    float u = 0.5 + 0.5 * (x / halfWidth);
+    float v = 0.5 + 0.5 * (y / halfHeight);
+    float w = saturate(dist / max(maxDist, 1e-4));
+    localUVW = float3(u, v, w);
+
+    float mFrustum = FrustumMask(worldPos, origin, right, up, fwd, maxDist, vertFOVDeg, horizFOVDeg, frustumFeather);
+    float mFacingRaw  = FacingMask(worldPos, worldNormal, origin, normalThreshold, facingFeather);
+    float mFacing = lerp(1.0, mFacingRaw, saturate(facingEnabled));
+
+    return saturate(mFrustum * mFacing);
+}
+
+#endif

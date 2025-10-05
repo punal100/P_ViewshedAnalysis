@@ -1,0 +1,41 @@
+#pragma once
+#include "/Plugin/P_ViewshedAnalysis/ViewshedCommon.ush"
+
+// Returns color; also outputs mask (0..1) and localUVW (for optional debugging)
+float3 ViewshedDecalColor(
+    float3 worldPos,
+    float3 worldNormal,
+    float3 origin,
+    float3 right,
+    float3 up,
+    float3 fwd,
+    float  maxDist,
+    float  vertFOVDeg,
+    float  horizFOVDeg,
+    float  normalThreshold,
+    float  frustumFeather,
+    float  facingFeather,
+    float  facingEnabled,
+    float3 colorInside,
+    float3 colorOutside,
+    float  gridIntensity,
+    out float mask,
+    out float3 localUVW)
+{
+    mask = ViewshedMask(
+        worldPos, worldNormal, origin, right, up, fwd,
+        maxDist, vertFOVDeg, horizFOVDeg, normalThreshold,
+        frustumFeather, facingFeather, facingEnabled, localUVW);
+
+    float3 col = lerp(colorOutside, colorInside, mask);
+
+    // Optional debug grid within frustum
+    float2 uv = localUVW.xy;
+    float lineW = 1.0 / 256.0;
+    float gx = 1.0 - smoothstep(0.0, lineW, abs(frac(uv.x * 10.0) - 0.5) - 0.5 + lineW);
+    float gy = 1.0 - smoothstep(0.0, lineW, abs(frac(uv.y * 10.0) - 0.5) - 0.5 + lineW);
+    float grid = saturate(gx + gy);
+
+    col = lerp(col, float3(1, 1, 1), grid * gridIntensity * mask);
+    return col;
+}

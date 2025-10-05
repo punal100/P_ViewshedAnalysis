@@ -1,0 +1,88 @@
+#pragma once
+#ifndef HIDDEN_VIEWSHED_DECAL_INLINE_USH
+#define HIDDEN_VIEWSHED_DECAL_INLINE_USH
+
+// Inline-only macros for use inside a Material Custom node Code box.
+// These avoid function definitions so they can be safely #included inside the generated function.
+
+// Computes a frustum mask into vsd_outMask (0..1) given worldPos and frustum params.
+#define VSD_FRUSTUM_MASK(vsd_worldPos, vsd_origin, vsd_right, vsd_up, vsd_fwd, vsd_maxDist, vsd_vertFOVDeg, vsd_horizFOVDeg, vsd_feather, vsd_outMask) \
+    do { \
+        float3 vsd_V = (vsd_worldPos) - (vsd_origin); \
+        float vsd_dist = length(vsd_V); \
+        if (vsd_dist <= 1e-4) { (vsd_outMask) = 1.0; } \
+        else { \
+            float3 vsd_L = vsd_V / vsd_dist; \
+            float vsd_z = dot(vsd_L, (vsd_fwd)); \
+            if (vsd_z <= 0.0) { (vsd_outMask) = 0.0; } \
+            else { \
+                float vsd_x = dot(vsd_L, (vsd_right)); \
+                float vsd_y = dot(vsd_L, (vsd_up)); \
+                float vsd_tanH = tan(radians((vsd_horizFOVDeg) * 0.5)); \
+                float vsd_tanV = tan(radians((vsd_vertFOVDeg) * 0.5)); \
+                float vsd_halfW = vsd_z * vsd_tanH; \
+                float vsd_halfH = vsd_z * vsd_tanV; \
+                float vsd_inside = step(abs(vsd_x), vsd_halfW) * step(abs(vsd_y), vsd_halfH) * step(vsd_dist, (vsd_maxDist)); \
+                float vsd_eps = 1e-3; \
+                float vsd_sx = saturate(1.0 - max(0.0, (abs(vsd_x) - vsd_halfW) / max(vsd_halfW, vsd_eps)) / max((vsd_feather), vsd_eps)); \
+                float vsd_sy = saturate(1.0 - max(0.0, (abs(vsd_y) - vsd_halfH) / max(vsd_halfH, vsd_eps)) / max((vsd_feather), vsd_eps)); \
+                float vsd_sd = saturate(1.0 - max(0.0, (vsd_dist - (vsd_maxDist)) / max((vsd_maxDist), vsd_eps)) / max((vsd_feather), vsd_eps)); \
+                float vsd_soft = min(min(vsd_sx, vsd_sy), vsd_sd); \
+                (vsd_outMask) = max(vsd_inside, vsd_soft * vsd_inside); \
+            } \
+        } \
+    } while(0)
+
+// Computes a facing mask into vsd_outMask (0..1) using worldNormal facing the observer.
+#define VSD_FACING_MASK(vsd_worldPos, vsd_worldNormal, vsd_origin, vsd_normalThreshold, vsd_feather, vsd_outMask) \
+    do { \
+        float3 vsd_V = (vsd_worldPos) - (vsd_origin); \
+        float vsd_dist = length(vsd_V); \
+        if (vsd_dist <= 1e-4) { (vsd_outMask) = 1.0; } \
+        else { \
+            float3 vsd_viewDir = -vsd_V / vsd_dist; \
+            float vsd_NdotV = dot(normalize(vsd_worldNormal), vsd_viewDir); \
+            float vsd_hard = step((vsd_normalThreshold), vsd_NdotV); \
+            float vsd_soft = saturate((vsd_NdotV - (vsd_normalThreshold)) / max((vsd_feather), 1e-3)); \
+            (vsd_outMask) = max(vsd_hard, vsd_soft); \
+        } \
+    } while(0)
+
+// Combined viewshed: writes vsd_outMask (0..1), vsd_outLocalUVW (float3), and vsd_outColor (float3)
+#define VSD_COMPUTE_VIEWSHED(vsd_worldPos, vsd_worldNormal, vsd_origin, vsd_right, vsd_up, vsd_fwd, \
+                              vsd_maxDist, vsd_vertFOVDeg, vsd_horizFOVDeg, vsd_normalThreshold, \
+                              vsd_frustumFeather, vsd_facingFeather, vsd_facingEnabled, vsd_colorInside, vsd_colorOutside, \
+                              vsd_gridIntensity, vsd_outMask, vsd_outLocalUVW, vsd_outColor) \
+    do { \
+        float3 vsd_V = (vsd_worldPos) - (vsd_origin); \
+        float vsd_dist = length(vsd_V); \
+        float3 vsd_L = vsd_dist > 1e-4 ? vsd_V / vsd_dist : (vsd_fwd); \
+        float vsd_z = dot(vsd_L, (vsd_fwd)); \
+        float vsd_x = dot(vsd_L, (vsd_right)); \
+        float vsd_y = dot(vsd_L, (vsd_up)); \
+        float vsd_tanH = tan(radians((vsd_horizFOVDeg) * 0.5)); \
+        float vsd_tanV = tan(radians((vsd_vertFOVDeg) * 0.5)); \
+        float vsd_halfW = max(vsd_z * vsd_tanH, 1e-4); \
+        float vsd_halfH = max(vsd_z * vsd_tanV, 1e-4); \
+        float vsd_u = 0.5 + 0.5 * (vsd_x / vsd_halfW); \
+        float vsd_v = 0.5 + 0.5 * (vsd_y / vsd_halfH); \
+        float vsd_w = saturate(vsd_dist / max((vsd_maxDist), 1e-4)); \
+        (vsd_outLocalUVW) = float3(vsd_u, vsd_v, vsd_w); \
+        float vsd_mFrustum; \
+        VSD_FRUSTUM_MASK((vsd_worldPos), (vsd_origin), (vsd_right), (vsd_up), (vsd_fwd), \
+                         (vsd_maxDist), (vsd_vertFOVDeg), (vsd_horizFOVDeg), (vsd_frustumFeather), vsd_mFrustum); \
+    float vsd_mFacingRaw; \
+    VSD_FACING_MASK((vsd_worldPos), (vsd_worldNormal), (vsd_origin), \
+            (vsd_normalThreshold), (vsd_facingFeather), vsd_mFacingRaw); \
+    float vsd_mFacing = lerp(1.0, vsd_mFacingRaw, saturate(vsd_facingEnabled)); \
+    (vsd_outMask) = saturate(vsd_mFrustum * vsd_mFacing); \
+        float3 vsd_col = lerp((vsd_colorOutside), (vsd_colorInside), (vsd_outMask)); \
+        float2 vsd_uv = (vsd_outLocalUVW).xy; \
+        float vsd_lineW = 1.0 / 256.0; \
+        float vsd_gx = 1.0 - smoothstep(0.0, vsd_lineW, abs(frac(vsd_uv.x * 10.0) - 0.5) - 0.5 + vsd_lineW); \
+        float vsd_gy = 1.0 - smoothstep(0.0, vsd_lineW, abs(frac(vsd_uv.y * 10.0) - 0.5) - 0.5 + vsd_lineW); \
+        float vsd_grid = saturate(vsd_gx + vsd_gy); \
+        (vsd_outColor) = lerp(vsd_col, float3(1,1,1), vsd_grid * (vsd_gridIntensity) * (vsd_outMask)); \
+    } while(0)
+
+#endif // HIDDEN_VIEWSHED_DECAL_INLINE_USH
