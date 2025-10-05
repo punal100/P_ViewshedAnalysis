@@ -39,6 +39,10 @@ struct P_VIEWSHEDANALYSIS_API FS__ViewShedPoint
     UPROPERTY(BlueprintReadOnly, Category = "ViewShed Point")
     FVector HitLocation;
 
+    /** World position where the line trace hit something (if any) */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Point")
+    FVector HitNormal;
+
     /** Actor that was hit by the line trace (if any) */
     UPROPERTY(BlueprintReadOnly, Category = "ViewShed Point")
     AActor *HitActor;
@@ -50,6 +54,7 @@ struct P_VIEWSHEDANALYSIS_API FS__ViewShedPoint
         bIsVisible = false;                  // Assume not visible until proven otherwise
         Distance = 0.0f;                     // Zero distance
         HitLocation = FVector::ZeroVector;   // No hit location
+        HitNormal = FVector::ZeroVector;     // No hit normal
         HitActor = nullptr;                  // No actor hit
     }
 };
@@ -192,7 +197,7 @@ public:
     bool bDebug_ShowVisiblePoints = true;
 
     /** Whether to show hidden/occluded points */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DebugVisualization",
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization",
               meta = (DisplayName = "Show Hidden Points"))
     bool bDebug_ShowHiddenPoints = false;
 

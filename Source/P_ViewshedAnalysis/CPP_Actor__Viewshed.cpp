@@ -30,8 +30,12 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     Debug_VisiblePointsISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     // Disable shadows for better performance
     Debug_VisiblePointsISMC->SetCastShadow(false);
+    // Set Component Mobility to Movable
+    Debug_VisiblePointsISMC->SetMobility(EComponentMobility::Movable);
     // Set Translation to World Absolute
     Debug_VisiblePointsISMC->SetUsingAbsoluteLocation(true);
+    // Set Rotation to World Absolute
+    Debug_VisiblePointsISMC->SetUsingAbsoluteRotation(true);
 
     // Create Debug Instanced Static Mesh Component for hidden points
     Debug_HiddenPointsISMC = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("HiddenPointsISMC"));
@@ -41,13 +45,27 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     Debug_HiddenPointsISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     // Disable shadows for better performance
     Debug_HiddenPointsISMC->SetCastShadow(false);
+    // Set Component Mobility to Movable
+    Debug_HiddenPointsISMC->SetMobility(EComponentMobility::Movable);
+    // Set Translation to World Absolute
+    Debug_HiddenPointsISMC->SetUsingAbsoluteLocation(true);
+    // Set Rotation to World Absolute
+    Debug_HiddenPointsISMC->SetUsingAbsoluteRotation(true);
 
     // Create Debug procedural mesh component, attach to root
     Debug_ProceduralMeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMeshComponent"));
+    // Attach to root so it moves with the actor
     Debug_ProceduralMeshComponent->SetupAttachment(RootComponent);
-    Debug_ProceduralMeshComponent->bUseAsyncCooking = true; // Use async cooking for performance
+    // Disable shadows for better performance
+    Debug_ProceduralMeshComponent->SetCastShadow(false);
+    // Use async cooking for performance
+    Debug_ProceduralMeshComponent->bUseAsyncCooking = true;
+    // Set Component Mobility to Movable
+    Debug_ProceduralMeshComponent->SetMobility(EComponentMobility::Movable);
     // Set Translation to World Absolute
     Debug_ProceduralMeshComponent->SetUsingAbsoluteLocation(true);
+    // Set Rotation to World Absolute
+    Debug_ProceduralMeshComponent->SetUsingAbsoluteRotation(true);
 
     // Initialize default property values
     // ViewDirection = FVector::ForwardVector; // Point forward along X-axis
@@ -212,6 +230,8 @@ void ACPP_Actor__Viewshed::StartAnalysis()
         AnalysisResults[i].bIsVisible = false;
         // Initialize hit location to endpoint (will be updated if hit occurs)
         AnalysisResults[i].HitLocation = TraceEndpoints[i];
+        // Initialize hit normal to zero until a hit provides a value
+        AnalysisResults[i].HitNormal = FVector::ZeroVector;
         // Initialize hit actor as null
         AnalysisResults[i].HitActor = nullptr;
     }
@@ -354,6 +374,8 @@ void ACPP_Actor__Viewshed::ProcessSingleTrace(int32 TraceIndex)
         AnalysisResults[TraceIndex].bIsVisible = false;
         // Record where we hit
         AnalysisResults[TraceIndex].HitLocation = HitResult.Location;
+        // Record surface normal at hit
+        AnalysisResults[TraceIndex].HitNormal = HitResult.Normal;
         // Record what we hit
         AnalysisResults[TraceIndex].HitActor = HitResult.GetActor();
     }
@@ -363,6 +385,8 @@ void ACPP_Actor__Viewshed::ProcessSingleTrace(int32 TraceIndex)
         AnalysisResults[TraceIndex].bIsVisible = true;
         // Hit location is the target endpoint
         AnalysisResults[TraceIndex].HitLocation = TargetLoc;
+        // No surface normal when no obstruction
+        AnalysisResults[TraceIndex].HitNormal = FVector::ZeroVector;
         // No actor was hit
         AnalysisResults[TraceIndex].HitActor = nullptr;
     }
@@ -384,6 +408,7 @@ void ACPP_Actor__Viewshed::ProcessSingleTrace(int32 TraceIndex)
 void ACPP_Actor__Viewshed::
     BuildDebug_PointMesh()
 {
+    const FVector ObserverLoc = GetObserverLocation();
     // Clear existing debug points (defensive)
     if (Debug_VisiblePointsISMC)
     {
@@ -400,8 +425,8 @@ void ACPP_Actor__Viewshed::
     {
         // Create transform for this instance
         FTransform InstanceTransform;
-        // Position at the analysis point (slightly offset upward for visibility)
-        InstanceTransform.SetLocation(Point.WorldPosition + FVector(0, 0, 10));
+        // Position relative to the viewshed origin (slightly offset upward for visibility)
+        InstanceTransform.SetLocation((Point.WorldPosition - ObserverLoc) + FVector(0, 0, 10));
         // Set uniform scale based on point scale setting
         InstanceTransform.SetScale3D(FVector(Debug_PointScale, Debug_PointScale, Debug_PointScale));
         // Use default rotation (no rotation needed for spheres)
@@ -436,6 +461,9 @@ void ACPP_Actor__Viewshed::BuildDebug_ProceduralMergedMesh()
     {
         Debug_ProceduralMeshComponent->ClearAllMeshSections();
     }
+
+    // Build geometry in component-local space relative to the viewshed origin
+    const FVector ObserverLoc = GetObserverLocation();
 
     int32 H = HorizontalSamples;
     int32 V = VerticalSamples;
@@ -489,22 +517,22 @@ void ACPP_Actor__Viewshed::BuildDebug_ProceduralMergedMesh()
 
                     // ------- FRONT FACE -------
                     int vi = VertArray.Num();
-                    VertArray.Add(p00.WorldPosition);
+                    VertArray.Add(p00.WorldPosition - ObserverLoc);
                     NormArray.Add(normal);
                     ColArray.Add(FLinearColor::Green);
                     UVArray.Add(FVector2D((float)h / (H - 1), (float)v / (V - 1)));
                     TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p10.WorldPosition);
+                    VertArray.Add(p10.WorldPosition - ObserverLoc);
                     NormArray.Add(normal);
                     ColArray.Add(FLinearColor::Green);
                     UVArray.Add(FVector2D((float)h / (H - 1), (float)(v + 1) / (V - 1)));
                     TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p01.WorldPosition);
+                    VertArray.Add(p01.WorldPosition - ObserverLoc);
                     NormArray.Add(normal);
                     ColArray.Add(FLinearColor::Green);
                     UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)v / (V - 1)));
                     TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p11.WorldPosition);
+                    VertArray.Add(p11.WorldPosition - ObserverLoc);
                     NormArray.Add(normal);
                     ColArray.Add(FLinearColor::Green);
                     UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)(v + 1) / (V - 1)));
@@ -520,22 +548,22 @@ void ACPP_Actor__Viewshed::BuildDebug_ProceduralMergedMesh()
 
                     // ------- BACK FACE -------
                     int vj = VertArray.Num();
-                    VertArray.Add(p00.WorldPosition);
+                    VertArray.Add(p00.WorldPosition - ObserverLoc);
                     NormArray.Add(-normal);
                     ColArray.Add(FLinearColor::Green);
                     UVArray.Add(FVector2D((float)h / (H - 1), (float)v / (V - 1)));
                     TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p10.WorldPosition);
+                    VertArray.Add(p10.WorldPosition - ObserverLoc);
                     NormArray.Add(-normal);
                     ColArray.Add(FLinearColor::Green);
                     UVArray.Add(FVector2D((float)h / (H - 1), (float)(v + 1) / (V - 1)));
                     TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p01.WorldPosition);
+                    VertArray.Add(p01.WorldPosition - ObserverLoc);
                     NormArray.Add(-normal);
                     ColArray.Add(FLinearColor::Green);
                     UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)v / (V - 1)));
                     TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p11.WorldPosition);
+                    VertArray.Add(p11.WorldPosition - ObserverLoc);
                     NormArray.Add(-normal);
                     ColArray.Add(FLinearColor::Green);
                     UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)(v + 1) / (V - 1)));
@@ -579,6 +607,31 @@ void ACPP_Actor__Viewshed::BuildDebug_ProceduralMergedMesh()
  */
 void ACPP_Actor__Viewshed::UpdateVisualization()
 {
+    // Anchor components at the viewshed origin so they rotate around the correct pivot
+    const FVector ObserverLoc = GetObserverLocation();
+    const FRotator IdentityRot = FRotator::ZeroRotator;
+    if (Debug_VisiblePointsISMC)
+    {
+        Debug_VisiblePointsISMC->SetUsingAbsoluteLocation(true);
+        Debug_VisiblePointsISMC->SetUsingAbsoluteRotation(true);
+        Debug_VisiblePointsISMC->SetWorldLocation(ObserverLoc);
+        Debug_VisiblePointsISMC->SetWorldRotation(IdentityRot);
+    }
+    if (Debug_HiddenPointsISMC)
+    {
+        Debug_HiddenPointsISMC->SetUsingAbsoluteLocation(true);
+        Debug_HiddenPointsISMC->SetUsingAbsoluteRotation(true);
+        Debug_HiddenPointsISMC->SetWorldLocation(ObserverLoc);
+        Debug_HiddenPointsISMC->SetWorldRotation(IdentityRot);
+    }
+    if (Debug_ProceduralMeshComponent)
+    {
+        Debug_ProceduralMeshComponent->SetUsingAbsoluteLocation(true);
+        Debug_ProceduralMeshComponent->SetUsingAbsoluteRotation(true);
+        Debug_ProceduralMeshComponent->SetWorldLocation(ObserverLoc);
+        Debug_ProceduralMeshComponent->SetWorldRotation(IdentityRot);
+    }
+
     // Clear existing instances from both components (defensive checks)
     if (Debug_VisiblePointsISMC)
         Debug_VisiblePointsISMC->ClearInstances();
