@@ -87,6 +87,21 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     // Set Rotation to World Absolute
     Debug_ProceduralMeshComponent->SetUsingAbsoluteRotation(true);
 
+    // Create Debug procedural mesh component, attach to root
+    VisibleVisualization_ProceduralMeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("VisibleVisualization_ProceduralMeshComponent"));
+    // Attach to root so it moves with the actor
+    VisibleVisualization_ProceduralMeshComponent->SetupAttachment(RootComponent);
+    // Disable shadows for better performance
+    VisibleVisualization_ProceduralMeshComponent->SetCastShadow(false);
+    // Use async cooking for performance
+    VisibleVisualization_ProceduralMeshComponent->bUseAsyncCooking = true;
+    // Set Component Mobility to Movable
+    VisibleVisualization_ProceduralMeshComponent->SetMobility(EComponentMobility::Movable);
+    // Set Translation to World Absolute
+    VisibleVisualization_ProceduralMeshComponent->SetUsingAbsoluteLocation(true);
+    // Exclude from receiving decals
+    VisibleVisualization_ProceduralMeshComponent->SetReceivesDecals(false);
+
     // Initialize default property values
     // ViewDirection = FVector::ForwardVector; // Point forward along X-axis
     MaxDistance = 5000.0f;   // 50 meter range
@@ -94,10 +109,8 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     HorizontalFOV = 90.0f;   // 90 degree horizontal view
     ObserverHeight = 150.0f; // 1.5 meter eye height
 
-    // Set reasonable sampling resolution
-    HorizontalSamples = 20; // 20 samples horizontally
-    VerticalSamples = 15;   // 15 samples vertically
-    DistanceSteps = 5;      // 5 distance layers
+    // Set reasonable sampling resolution defaults
+    DistanceSteps = 5; // 5 distance layers
 
     // Debug Visualization defaults
     Debug_PointScale = 1.0f;         // Normal size points
@@ -111,6 +124,9 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     bAutoUpdate = true;     // Auto-update enabled
     UpdateInterval = 2.0f;  // Update every 2 seconds
     MaxTracesPerFrame = 50; // Max 50 traces per frame
+
+    CachedHorizontalSampleCount = 0;
+    CachedDistanceBandCount = 0;
 }
 
 /**
@@ -201,7 +217,7 @@ void ACPP_Actor__Viewshed::Tick(float DeltaTime)
         int32 TracesProcessedThisFrame = 0;
 
         // Process traces up to the frame limit or until complete
-        while (CurrentTraceIndex < TraceEndpoints.Num() &&
+        while (CurrentTraceIndex < TracePointQueue.Num() &&
                TracesProcessedThisFrame < MaxTracesPerFrame)
         {
             // Process the next trace in the queue
@@ -213,7 +229,7 @@ void ACPP_Actor__Viewshed::Tick(float DeltaTime)
         }
 
         // Check if analysis is complete
-        if (CurrentTraceIndex >= TraceEndpoints.Num())
+        if (CurrentTraceIndex >= TracePointQueue.Num())
         {
             // Mark analysis as complete
             bAnalysisInProgress = false;
@@ -243,25 +259,33 @@ void ACPP_Actor__Viewshed::StartAnalysis()
     // Clear any existing results
     ClearResults();
 
-    // Generate all the trace endpoints in pyramid pattern
+    // Generate all trace start/end pairs based on the current sampling configuration
     GenerateTraceEndpoints();
 
-    // Initialize the analysis results array
-    AnalysisResults.SetNum(TraceEndpoints.Num());
+    // If no traces were produced (e.g. degenerate sampling parameters) there is nothing to process
+    if (TracePointQueue.IsEmpty())
+    {
+        return;
+    }
+
+    // Initialize the analysis results array to match the number of traces we will execute
+    AnalysisResults.SetNum(TracePointQueue.Num());
 
     // Initialize each result with default values
     for (int32 i = 0; i < AnalysisResults.Num(); ++i)
     {
-        // Set the world position from trace endpoints
-        AnalysisResults[i].WorldPosition = TraceEndpoints[i];
+        const FS__ViewShedTracePoint &TracePoint = TracePointQueue[i];
+
+        // Cache the endpoint so visualisation updates have the final sample position available
+        AnalysisResults[i].WorldPosition = TracePoint.TraceEnd;
         // Calculate distance from observer to this point
-        AnalysisResults[i].Distance = FVector::Dist(GetObserverLocation(), TraceEndpoints[i]);
+        AnalysisResults[i].Distance = FVector::Dist(TracePoint.TraceStart, TracePoint.TraceEnd);
         // Initialize as not visible (will be updated during trace)
         AnalysisResults[i].bIsVisible = false;
         // Initialize hit location to endpoint (will be updated if hit occurs)
-        AnalysisResults[i].HitLocation = TraceEndpoints[i];
-        // Initialize hit normal to zero until a hit provides a value
-        AnalysisResults[i].HitNormal = FVector::ZeroVector;
+        AnalysisResults[i].HitLocation = TracePoint.TraceEnd;
+        // Initialize hit normal from ground support if available (updated during trace if occluded)
+        AnalysisResults[i].HitNormal = TracePoint.GroundNormal;
         // Initialize hit actor as null
         AnalysisResults[i].HitActor = nullptr;
     }
@@ -289,8 +313,12 @@ void ACPP_Actor__Viewshed::ClearResults()
 {
     // Clear the results array
     AnalysisResults.Empty();
-    // Clear trace endpoints array
-    TraceEndpoints.Empty();
+    // Clear hierarchical trace layout and flattened queue
+    TraceSections.Empty();
+    TracePointQueue.Empty();
+    CachedHorizontalSampleCount = 0;
+    CachedDistanceBandCount = 0;
+    CachedVerticalSampleCount = 0;
     // Clear all visible point instances
     if (Debug_VisiblePointsISMC)
     {
@@ -314,53 +342,155 @@ void ACPP_Actor__Viewshed::ClearResults()
  */
 void ACPP_Actor__Viewshed::GenerateTraceEndpoints()
 {
-    // Clear existing endpoints
-    TraceEndpoints.Empty();
+    // Reset previously generated sections and flattened queue
+    TraceSections.Empty();
+    TracePointQueue.Empty();
+    CachedHorizontalSampleCount = 0;
+    CachedDistanceBandCount = 0;
+    CachedVerticalSampleCount = 0;
 
-    // Get observer location as starting point
-    FVector ObserverLoc = GetObserverLocation();
-
-    // Find a valid up vector for the basis.
-    // If ViewDirection is close to UpVector (i.e., looking straight up or down), use ForwardVector as up instead.
-    FVector ForwardDir = GetActorForwardVector();
-    // FVector ArbitraryUp = (FMath::Abs(ForwardDir.Z) > 0.99f) ? FVector::ForwardVector : FVector::UpVector;
-    //  Create orthogonal basis vectors for the pyramid
-    FVector RightDir = GetActorRightVector();
-    FVector UpDir = GetActorUpVector();
-    // Recalculate up to ensure orthogonality
-    UpDir = FVector::CrossProduct(RightDir, ForwardDir).GetSafeNormal();
-
-    // Convert FOV from degrees to radians for calculations
-    float HalfVerticalRad = FMath::DegreesToRadians(VerticalFOV * 0.5f);
-    float HalfHorizontalRad = FMath::DegreesToRadians(HorizontalFOV * 0.5f);
-
-    // Generate endpoints for each distance step
-    for (int32 DistStep = 0; DistStep < DistanceSteps; ++DistStep)
+    UWorld *World = GetWorld();
+    if (!World)
     {
-        // Calculate distance for this step (evenly distributed)
-        float CurrentDistance = MaxDistance * (float(DistStep + 1) / float(DistanceSteps));
+        return;
+    }
 
-        // Generate grid of points at this distance
-        for (int32 VertIndex = 0; VertIndex < VerticalSamples; ++VertIndex)
+    const FVector ObserverLoc = GetObserverLocation();
+    const FVector UpVector = GetActorUpVector().GetSafeNormal();
+    const FVector ForwardVector = GetActorForwardVector().GetSafeNormal();
+    FVector RightVector = GetActorRightVector().GetSafeNormal();
+    // Ensure basis is orthonormal
+    RightVector = FVector::CrossProduct(UpVector, ForwardVector).GetSafeNormal();
+    const FVector TrueForward = FVector::CrossProduct(RightVector, UpVector).GetSafeNormal();
+
+    // Convert half-angle FOV values now to avoid repeated work inside the loops
+    const float HalfHorizontalRad = FMath::DegreesToRadians(FMath::Max(1e-3f, HorizontalFOV * 0.5f));
+    const float HalfVerticalRad = FMath::DegreesToRadians(FMath::Max(1e-3f, VerticalFOV * 0.5f));
+
+    // Derive section counts from user-provided ratios
+    const float SafeHRatio = FMath::Clamp(Horizontal_Sample_Section_Ratio, 0.01f, 1.0f);
+    const float SafeVRatio = FMath::Clamp(Vertical_Sample_Section_Ratio, 0.01f, 1.0f);
+    const int32 HorizontalSectionCount = FMath::Max(1, FMath::CeilToInt(1.0f / SafeHRatio));
+    const int32 VerticalSectionCount = FMath::Max(1, FMath::CeilToInt(1.0f / SafeVRatio));
+
+    const int32 EffectiveDistanceSteps = FMath::Max(1, DistanceSteps);
+
+    // Determine a consistent horizontal sample count based on the far-plane arc length and desired spacing
+    const float MaxArcWidth = 2.0f * MaxDistance * FMath::Tan(HalfHorizontalRad);
+    const float DesiredSpacing = FMath::Max(1.0f, Maximum_Distance_Between_Samples);
+    int32 HorizontalSampleCount = FMath::CeilToInt(MaxArcWidth / DesiredSpacing) + 1;
+    // Ensure at least Minimum_Samples_Per_Section per horizontal section
+    HorizontalSampleCount = FMath::Max(HorizontalSampleCount, HorizontalSectionCount * FMath::Max(1, Minimum_Samples_Per_Section));
+    // Round up to a multiple of sections so each section has (roughly) equal columns
+    if (HorizontalSampleCount % HorizontalSectionCount != 0)
+    {
+        HorizontalSampleCount += HorizontalSectionCount - (HorizontalSampleCount % HorizontalSectionCount);
+    }
+    CachedHorizontalSampleCount = HorizontalSampleCount;
+    CachedDistanceBandCount = EffectiveDistanceSteps;
+
+    // Determine vertical sample count similar to horizontal, based on far-plane height
+    const float MaxArcHeight = 2.0f * MaxDistance * FMath::Tan(HalfVerticalRad);
+    int32 VerticalSampleCount = FMath::CeilToInt(MaxArcHeight / DesiredSpacing) + 1;
+    // For vertical we keep a modest minimum per section to avoid exploding sample counts
+    VerticalSampleCount = FMath::Max(VerticalSampleCount, VerticalSectionCount * 1);
+    if (VerticalSampleCount % VerticalSectionCount != 0)
+    {
+        VerticalSampleCount += VerticalSectionCount - (VerticalSampleCount % VerticalSectionCount);
+    }
+
+    // Cache counts
+    TraceSections.SetNum(EffectiveDistanceSteps);
+    CachedVerticalSampleCount = VerticalSampleCount;
+    // Reserve for all vertical rows; first rows will be the central vertical slice to keep existing mesh assumptions intact
+    TracePointQueue.Reserve(EffectiveDistanceSteps * HorizontalSampleCount * VerticalSampleCount);
+
+    // No ground probing (ground-hugging removed)
+
+    for (int32 DistStep = 0; DistStep < EffectiveDistanceSteps; ++DistStep)
+    {
+        const float StepFraction = float(DistStep + 1) / float(EffectiveDistanceSteps);
+        const float CurrentDistance = MaxDistance * StepFraction;
+
+        FS__ViewShedTraceSection &DistanceSection = TraceSections[DistStep];
+        DistanceSection.HorizontalSectionCount = HorizontalSectionCount;
+        DistanceSection.VerticalSectionCount = VerticalSectionCount;
+        DistanceSection.TraceSections.SetNum(1);
+
+        FS__ViewShedTraceEndPoints &SectionPoints = DistanceSection.TraceSections[0];
+        SectionPoints.HorizontalSampleCount = HorizontalSampleCount;
+        SectionPoints.VerticalSampleCount = VerticalSampleCount;
+        SectionPoints.TraceEndPoints.Reset(HorizontalSampleCount * VerticalSampleCount);
+
+        // Pass 1: Generate the central vertical slice first (pitch = 0) so existing visible blanket (which assumes 2D grid) stays correct.
+        const int32 CentralVerticalIndex = FMath::Clamp(VerticalSampleCount / 2, 0, FMath::Max(0, VerticalSampleCount - 1));
+        const float CentralVerticalAngle = 0.0f; // middle row (no pitch)
+
+        for (int32 HorizontalIndex = 0; HorizontalIndex < HorizontalSampleCount; ++HorizontalIndex)
         {
-            for (int32 HorzIndex = 0; HorzIndex < HorizontalSamples; ++HorzIndex)
+            const float HorizontalAlpha = (HorizontalSampleCount <= 1)
+                                              ? 0.5f
+                                              : float(HorizontalIndex) / float(HorizontalSampleCount - 1);
+            const float HorizontalAngle = FMath::Lerp(-HalfHorizontalRad, HalfHorizontalRad, HorizontalAlpha);
+
+            // Build direction using yaw (horizontal) and pitch (central vertical row)
+            const FQuat Yaw(UpVector, HorizontalAngle);
+            const FQuat Pitch(RightVector, CentralVerticalAngle);
+            const FVector Direction = (Yaw * Pitch).RotateVector(TrueForward).GetSafeNormal();
+
+            const FVector PointOnFrustum = ObserverLoc + Direction * CurrentDistance;
+            FVector TargetLocation = PointOnFrustum; // visibility determined by occluder before reaching this point
+            const bool bGroundHit = true;            // treat as supported; we no longer depend on ground probing
+            const FVector GroundNormal = FVector::ZeroVector;
+
+            FS__ViewShedTracePoint TracePoint;
+            TracePoint.TraceStart = ObserverLoc;
+            TracePoint.TraceEnd = TargetLocation;
+            TracePoint.DistanceBandIndex = DistStep;
+            TracePoint.HorizontalSampleIndex = HorizontalIndex;
+            TracePoint.VerticalSampleIndex = CentralVerticalIndex;
+            TracePoint.bHasGroundSupport = bGroundHit;
+            TracePoint.GroundNormal = GroundNormal;
+
+            SectionPoints.TraceEndPoints.Add(TracePoint);
+            TracePointQueue.Add(TracePoint);
+        }
+
+        // Pass 2: Generate remaining vertical rows (bottom to top), skipping the central index already added
+        for (int32 VerticalIndex = 0; VerticalIndex < VerticalSampleCount; ++VerticalIndex)
+        {
+            if (VerticalIndex == CentralVerticalIndex)
             {
-                // Calculate normalized coordinates (-1 to +1) for this grid position
-                float NormalizedHorizontal = -1.0f + (2.0f * float(HorzIndex) / float(HorizontalSamples - 1));
-                float NormalizedVertical = -1.0f + (2.0f * float(VertIndex) / float(VerticalSamples - 1));
+                continue;
+            }
+            const float VerticalAlpha = (VerticalSampleCount <= 1) ? 0.5f : float(VerticalIndex) / float(VerticalSampleCount - 1);
+            const float VerticalAngle = FMath::Lerp(-HalfVerticalRad, HalfVerticalRad, VerticalAlpha);
 
-                // Convert to angular offsets from center
-                float HorizontalAngle = NormalizedHorizontal * HalfHorizontalRad;
-                float VerticalAngle = NormalizedVertical * HalfVerticalRad;
+            for (int32 HorizontalIndex = 0; HorizontalIndex < HorizontalSampleCount; ++HorizontalIndex)
+            {
+                const float HorizontalAlpha = (HorizontalSampleCount <= 1)
+                                                  ? 0.5f
+                                                  : float(HorizontalIndex) / float(HorizontalSampleCount - 1);
+                const float HorizontalAngle = FMath::Lerp(-HalfHorizontalRad, HalfHorizontalRad, HorizontalAlpha);
 
-                // Calculate direction vector for this sample point
-                FVector SampleDirection = CalculateDirectionFromAngles(HorizontalAngle, VerticalAngle);
+                const FQuat Yaw(UpVector, HorizontalAngle);
+                const FQuat Pitch(RightVector, VerticalAngle);
+                const FVector Direction = (Yaw * Pitch).RotateVector(TrueForward).GetSafeNormal();
 
-                // Calculate final world position at the desired distance
-                FVector EndPoint = ObserverLoc + (SampleDirection * CurrentDistance);
+                const FVector PointOnFrustum = ObserverLoc + Direction * CurrentDistance;
+                FVector TargetLocation = PointOnFrustum;
 
-                // Add this endpoint to our array
-                TraceEndpoints.Add(EndPoint);
+                FS__ViewShedTracePoint TracePoint;
+                TracePoint.TraceStart = ObserverLoc;
+                TracePoint.TraceEnd = TargetLocation;
+                TracePoint.DistanceBandIndex = DistStep;
+                TracePoint.HorizontalSampleIndex = HorizontalIndex;
+                TracePoint.VerticalSampleIndex = VerticalIndex;
+                TracePoint.bHasGroundSupport = true;
+                TracePoint.GroundNormal = FVector::ZeroVector;
+
+                SectionPoints.TraceEndPoints.Add(TracePoint);
+                TracePointQueue.Add(TracePoint);
             }
         }
     }
@@ -373,23 +503,27 @@ void ACPP_Actor__Viewshed::GenerateTraceEndpoints()
 void ACPP_Actor__Viewshed::ProcessSingleTrace(int32 TraceIndex)
 {
     // Validate input parameters
-    if (!IsValid(GetWorld()) || TraceIndex >= TraceEndpoints.Num() || TraceIndex >= AnalysisResults.Num())
+    if (!IsValid(GetWorld()) || TraceIndex >= TracePointQueue.Num() || TraceIndex >= AnalysisResults.Num())
     {
         return;
     }
 
     // Get observer and target locations
-    FVector ObserverLoc = GetObserverLocation();
-    FVector TargetLoc = TraceEndpoints[TraceIndex];
+    const FS__ViewShedTracePoint &TracePoint = TracePointQueue[TraceIndex];
+    const FVector ObserverLoc = TracePoint.TraceStart;
+    const FVector TargetLoc = TracePoint.TraceEnd;
 
     // Set up collision query parameters
     FCollisionQueryParams QueryParams;
     QueryParams.AddIgnoredActor(this); // Ignore self to avoid self-collision
     QueryParams.bTraceComplex = false; // Use simple collision for performance
 
+    const FVector TraceVector = TargetLoc - ObserverLoc;
+    const float TraceLength = TraceVector.Size();
+
     // Perform the line trace
     FHitResult HitResult;
-    bool bHit = GetWorld()->LineTraceSingleByChannel(
+    const bool bHit = GetWorld()->LineTraceSingleByChannel(
         HitResult,      // Output hit result
         ObserverLoc,    // Start location
         TargetLoc,      // End location
@@ -397,29 +531,48 @@ void ACPP_Actor__Viewshed::ProcessSingleTrace(int32 TraceIndex)
         QueryParams     // Query parameters
     );
 
-    // Update analysis result based on hit result
-    if (bHit)
+    const float DistanceTolerance = 5.0f;
+
+    if (!bHit)
     {
-        // Something blocked the view - point is not visible
-        AnalysisResults[TraceIndex].bIsVisible = false;
-        // Record where we hit
-        AnalysisResults[TraceIndex].HitLocation = HitResult.Location;
-        // Record surface normal at hit
-        AnalysisResults[TraceIndex].HitNormal = HitResult.Normal;
-        // Record what we hit
+        // Nothing blocked the view all the way to the intended ground position
+        AnalysisResults[TraceIndex].bIsVisible = true;
+        AnalysisResults[TraceIndex].HitLocation = TargetLoc;
+        AnalysisResults[TraceIndex].HitNormal = TracePoint.GroundNormal;
+        AnalysisResults[TraceIndex].HitActor = nullptr;
+    }
+    else if (TraceLength <= KINDA_SMALL_NUMBER)
+    {
+        // Degenerate trace (observer origin) - treat as visible anchor
+        AnalysisResults[TraceIndex].bIsVisible = true;
+        AnalysisResults[TraceIndex].HitLocation = TargetLoc;
+        AnalysisResults[TraceIndex].HitNormal = TracePoint.GroundNormal;
         AnalysisResults[TraceIndex].HitActor = HitResult.GetActor();
     }
     else
     {
-        // No obstruction - point is visible
-        AnalysisResults[TraceIndex].bIsVisible = true;
-        // Hit location is the target endpoint
-        AnalysisResults[TraceIndex].HitLocation = TargetLoc;
-        // No surface normal when no obstruction
-        AnalysisResults[TraceIndex].HitNormal = FVector::ZeroVector;
-        // No actor was hit
-        AnalysisResults[TraceIndex].HitActor = nullptr;
+        const float HitDistance = (HitResult.Location - ObserverLoc).Size();
+        const bool bReachedTarget = FMath::IsNearlyEqual(HitDistance, TraceLength, DistanceTolerance) || HitDistance > TraceLength;
+
+        if (bReachedTarget)
+        {
+            // Reached near the intended endpoint, but we still have a concrete surface from the trace
+            AnalysisResults[TraceIndex].bIsVisible = true;
+            AnalysisResults[TraceIndex].HitLocation = HitResult.Location; // use the actual surface contact point
+            AnalysisResults[TraceIndex].HitNormal = TracePoint.GroundNormal.IsNearlyZero() ? HitResult.Normal : TracePoint.GroundNormal;
+            AnalysisResults[TraceIndex].HitActor = HitResult.GetActor();
+        }
+        else
+        {
+            // Something obstructed the path before reaching the target
+            AnalysisResults[TraceIndex].bIsVisible = false;
+            AnalysisResults[TraceIndex].HitLocation = HitResult.Location;
+            AnalysisResults[TraceIndex].HitNormal = HitResult.Normal;
+            AnalysisResults[TraceIndex].HitActor = HitResult.GetActor();
+        }
     }
+
+    // Ground support no longer affects visibility; only occluder hits vs reaching the target matters
 
     // Draw debug line if enabled
     if (bDebug_ShowLines)
@@ -487,147 +640,175 @@ void ACPP_Actor__Viewshed::
  */
 void ACPP_Actor__Viewshed::BuildDebug_ProceduralMergedMesh()
 {
-    if (Debug_ProceduralMeshComponent)
+    if (!Debug_ProceduralMeshComponent)
     {
-        Debug_ProceduralMeshComponent->ClearAllMeshSections();
+        return;
     }
 
-    // Build geometry in component-local space relative to the viewshed origin
-    const FVector ObserverLoc = GetObserverLocation();
+    Debug_ProceduralMeshComponent->ClearAllMeshSections();
 
-    int32 H = HorizontalSamples;
-    int32 V = VerticalSamples;
-    int32 NumSteps = DistanceSteps;
-    int32 NumPointsPerStep = H * V;
-
-    if (AnalysisResults.Num() != NumSteps * NumPointsPerStep)
-        return;
-
-    int SectionIdx = 0;
-    for (int32 step = 0; step < NumSteps; ++step)
+    if (AnalysisResults.IsEmpty())
     {
-        // Buffers for visible and hidden faces for this layer
-        TArray<FVector> VertVis, VertHid;
-        TArray<int32> TrisVis, TrisHid;
-        TArray<FVector> NormVis, NormHid;
-        TArray<FLinearColor> ColVis, ColHid;
-        TArray<FVector2D> UVVis, UVHid;
-        TArray<FProcMeshTangent> TgtVis, TgtHid;
+        return;
+    }
+    // TODO Invisible points should have HiddenMaterial
+}
 
-        int32 base = step * NumPointsPerStep;
-        // Use actor forward as the surface normal basis for procedural faces
-        FVector normal = GetActorForwardVector().GetSafeNormal();
+/**
+ * Build Visible Visualization Procedural Merged Mesh
+ */
+void ACPP_Actor__Viewshed::BuildVisibleVisualization_ProceduralMergedMesh()
+{
+    if (!VisibleVisualization_ProceduralMeshComponent)
+    {
+        return;
+    }
 
-        for (int32 v = 0; v < V - 1; ++v)
+    VisibleVisualization_ProceduralMeshComponent->ClearAllMeshSections();
+
+    if (AnalysisResults.IsEmpty())
+    {
+        return;
+    }
+
+    const FVector ObserverLoc = GetObserverLocation();
+    const float QuadHalfSize = FMath::Max(1.0f, VisibleVisualization_QuadHalfSize);
+    const FTransform ComponentTransform = VisibleVisualization_ProceduralMeshComponent->GetComponentTransform();
+    const FTransform WorldToComponent = ComponentTransform.Inverse();
+
+    TArray<FVector> Vertices;
+    TArray<int32> Triangles;
+    TArray<FVector> Normals;
+    TArray<FVector2D> UVs;
+    TArray<FLinearColor> VertexColors;
+    TArray<FProcMeshTangent> Tangents;
+    Vertices.Reserve(AnalysisResults.Num() * 8);
+    Normals.Reserve(AnalysisResults.Num() * 8);
+    UVs.Reserve(AnalysisResults.Num() * 8);
+    VertexColors.Reserve(AnalysisResults.Num() * 8);
+    Tangents.Reserve(AnalysisResults.Num() * 8);
+    Triangles.Reserve(AnalysisResults.Num() * 12);
+
+    const FLinearColor VisibleColor(0.0f, 1.0f, 0.0f, 1.0f);
+    const FLinearColor HiddenColor(1.0f, 0.0f, 0.0f, 1.0f);
+
+    const FVector2D QuadUVs[4] = {
+        FVector2D(1.0f, 1.0f),
+        FVector2D(0.0f, 1.0f),
+        FVector2D(0.0f, 0.0f),
+        FVector2D(1.0f, 0.0f)};
+
+    for (const FS__ViewShedPoint &Point : AnalysisResults)
+    {
+        // Only place geometry where we actually hit a surface (visible or occluded)
+        const bool bHasRealHit = (Point.HitActor != nullptr) || (!Point.HitNormal.IsNearlyZero());
+        if (!bHasRealHit)
         {
-            for (int32 h = 0; h < H - 1; ++h)
+            continue;
+        }
+
+        // Choose surface normal from hit; fallback points back to observer
+        FVector SurfaceNormal = Point.HitNormal;
+        if (!SurfaceNormal.Normalize())
+        {
+            SurfaceNormal = (ObserverLoc - Point.HitLocation).GetSafeNormal();
+            if (!SurfaceNormal.Normalize())
             {
-                int idx00 = base + v * H + h;
-                int idx01 = base + v * H + h + 1;
-                int idx10 = base + (v + 1) * H + h;
-                int idx11 = base + (v + 1) * H + h + 1;
-
-                const auto &p00 = AnalysisResults[idx00];
-                const auto &p01 = AnalysisResults[idx01];
-                const auto &p10 = AnalysisResults[idx10];
-                const auto &p11 = AnalysisResults[idx11];
-
-                bool vis00 = p00.bIsVisible, vis01 = p01.bIsVisible, vis10 = p10.bIsVisible, vis11 = p11.bIsVisible;
-
-                // Only process fully visible or fully hidden quads for material separation
-                if ((vis00 && vis01 && vis10 && vis11) || (!vis00 && !vis01 && !vis10 && !vis11))
-                {
-                    bool isVisible = vis00; // all must match, so pick one
-                    TArray<FVector> &VertArray = isVisible ? VertVis : VertHid;
-                    TArray<int32> &TrisArray = isVisible ? TrisVis : TrisHid;
-                    TArray<FVector> &NormArray = isVisible ? NormVis : NormHid;
-                    TArray<FLinearColor> &ColArray = isVisible ? ColVis : ColHid;
-                    TArray<FVector2D> &UVArray = isVisible ? UVVis : UVHid;
-                    TArray<FProcMeshTangent> &TgtArray = isVisible ? TgtVis : TgtHid;
-
-                    // ------- FRONT FACE -------
-                    int vi = VertArray.Num();
-                    VertArray.Add(p00.WorldPosition - ObserverLoc);
-                    NormArray.Add(normal);
-                    ColArray.Add(FLinearColor::Green);
-                    UVArray.Add(FVector2D((float)h / (H - 1), (float)v / (V - 1)));
-                    TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p10.WorldPosition - ObserverLoc);
-                    NormArray.Add(normal);
-                    ColArray.Add(FLinearColor::Green);
-                    UVArray.Add(FVector2D((float)h / (H - 1), (float)(v + 1) / (V - 1)));
-                    TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p01.WorldPosition - ObserverLoc);
-                    NormArray.Add(normal);
-                    ColArray.Add(FLinearColor::Green);
-                    UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)v / (V - 1)));
-                    TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p11.WorldPosition - ObserverLoc);
-                    NormArray.Add(normal);
-                    ColArray.Add(FLinearColor::Green);
-                    UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)(v + 1) / (V - 1)));
-                    TgtArray.Add(FProcMeshTangent());
-
-                    // Two triangles for front face
-                    TrisArray.Add(vi + 0);
-                    TrisArray.Add(vi + 1);
-                    TrisArray.Add(vi + 2);
-                    TrisArray.Add(vi + 2);
-                    TrisArray.Add(vi + 1);
-                    TrisArray.Add(vi + 3);
-
-                    // ------- BACK FACE -------
-                    int vj = VertArray.Num();
-                    VertArray.Add(p00.WorldPosition - ObserverLoc);
-                    NormArray.Add(-normal);
-                    ColArray.Add(FLinearColor::Green);
-                    UVArray.Add(FVector2D((float)h / (H - 1), (float)v / (V - 1)));
-                    TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p10.WorldPosition - ObserverLoc);
-                    NormArray.Add(-normal);
-                    ColArray.Add(FLinearColor::Green);
-                    UVArray.Add(FVector2D((float)h / (H - 1), (float)(v + 1) / (V - 1)));
-                    TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p01.WorldPosition - ObserverLoc);
-                    NormArray.Add(-normal);
-                    ColArray.Add(FLinearColor::Green);
-                    UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)v / (V - 1)));
-                    TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p11.WorldPosition - ObserverLoc);
-                    NormArray.Add(-normal);
-                    ColArray.Add(FLinearColor::Green);
-                    UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)(v + 1) / (V - 1)));
-                    TgtArray.Add(FProcMeshTangent());
-
-                    // Two triangles for back face (reverse winding order)
-                    TrisArray.Add(vj + 2);
-                    TrisArray.Add(vj + 1);
-                    TrisArray.Add(vj + 0);
-                    TrisArray.Add(vj + 2);
-                    TrisArray.Add(vj + 3);
-                    TrisArray.Add(vj + 1);
-                }
-                // (Optional: add mixed quad handling here if required)
+                SurfaceNormal = FVector::UpVector;
             }
         }
 
-        // Create mesh sections for visible and hidden using debug procedural component
-        if (Debug_ProceduralMeshComponent)
+        // Lift slightly off the surface along the surface normal
+        const FVector BaseWorldPosition = Point.HitLocation + SurfaceNormal * VisibleVisualization_SurfaceOffset;
+
+        // Build a tangent frame on the surface
+        FVector TangentX, TangentY;
+        SurfaceNormal.FindBestAxisVectors(TangentX, TangentY);
+        const FVector TangentDir = TangentX.GetSafeNormal();
+        TangentX = TangentX.GetSafeNormal() * QuadHalfSize;
+        TangentY = TangentY.GetSafeNormal() * QuadHalfSize;
+
+        FVector LocalNormal = WorldToComponent.TransformVectorNoScale(SurfaceNormal).GetSafeNormal();
+        if (LocalNormal.IsNearlyZero())
         {
-            Debug_ProceduralMeshComponent->CreateMeshSection_LinearColor(
-                SectionIdx, VertVis, TrisVis, NormVis, UVVis, {}, {}, {}, ColVis, TgtVis, false, false); // Use single-sided flag, as manual double sided
-
-            if (VisibleMaterial)
-                Debug_ProceduralMeshComponent->SetMaterial(SectionIdx, VisibleMaterial);
-
-            Debug_ProceduralMeshComponent->CreateMeshSection_LinearColor(
-                SectionIdx + 1, VertHid, TrisHid, NormHid, UVHid, {}, {}, {}, ColHid, TgtHid, false, false); // Use single-sided flag
-
-            if (HiddenMaterial)
-                Debug_ProceduralMeshComponent->SetMaterial(SectionIdx + 1, HiddenMaterial);
+            LocalNormal = FVector::UpVector;
         }
 
-        SectionIdx += 2; // two sections per step
+        FVector LocalTangentDir = WorldToComponent.TransformVectorNoScale(TangentDir).GetSafeNormal();
+        if (LocalTangentDir.IsNearlyZero())
+        {
+            LocalTangentDir = FVector::ForwardVector;
+        }
+
+        FVector OffsetCorners[4] = {
+            TangentX + TangentY,
+            -TangentX + TangentY,
+            -TangentX - TangentY,
+            TangentX - TangentY};
+
+        const int32 FrontBaseIndex = Vertices.Num();
+        for (int32 CornerIdx = 0; CornerIdx < 4; ++CornerIdx)
+        {
+            const FVector WorldPosition = BaseWorldPosition + OffsetCorners[CornerIdx];
+            Vertices.Add(WorldToComponent.TransformPosition(WorldPosition));
+            Normals.Add(LocalNormal);
+            UVs.Add(QuadUVs[CornerIdx]);
+            VertexColors.Add(Point.bIsVisible ? VisibleColor : HiddenColor);
+            Tangents.Add(FProcMeshTangent(LocalTangentDir, false));
+        }
+
+        const int32 BackBaseIndex = Vertices.Num();
+        for (int32 CornerIdx = 0; CornerIdx < 4; ++CornerIdx)
+        {
+            const FVector WorldPosition = BaseWorldPosition + OffsetCorners[CornerIdx];
+            Vertices.Add(WorldToComponent.TransformPosition(WorldPosition));
+            Normals.Add(-LocalNormal);
+            UVs.Add(QuadUVs[CornerIdx]);
+            VertexColors.Add(Point.bIsVisible ? VisibleColor : HiddenColor);
+            Tangents.Add(FProcMeshTangent(-LocalTangentDir, false));
+        }
+
+        // Front face
+        Triangles.Add(FrontBaseIndex + 0);
+        Triangles.Add(FrontBaseIndex + 1);
+        Triangles.Add(FrontBaseIndex + 2);
+
+        Triangles.Add(FrontBaseIndex + 0);
+        Triangles.Add(FrontBaseIndex + 2);
+        Triangles.Add(FrontBaseIndex + 3);
+
+        // Back face (reverse winding)
+        Triangles.Add(BackBaseIndex + 0);
+        Triangles.Add(BackBaseIndex + 2);
+        Triangles.Add(BackBaseIndex + 1);
+
+        Triangles.Add(BackBaseIndex + 0);
+        Triangles.Add(BackBaseIndex + 3);
+        Triangles.Add(BackBaseIndex + 2);
+    }
+
+    if (Triangles.Num() == 0 || Vertices.Num() == 0)
+    {
+        return;
+    }
+
+    VisibleVisualization_ProceduralMeshComponent->CreateMeshSection_LinearColor(
+        0,
+        Vertices,
+        Triangles,
+        Normals,
+        UVs,
+        {},
+        {},
+        {},
+        VertexColors,
+        Tangents,
+        false,
+        false);
+
+    if (VisibleMaterial)
+    {
+        VisibleVisualization_ProceduralMeshComponent->SetMaterial(0, VisibleMaterial);
     }
 }
 
@@ -639,7 +820,9 @@ void ACPP_Actor__Viewshed::UpdateVisualization()
 {
     // Anchor components at the viewshed origin so they rotate around the correct pivot
     const FVector ObserverLoc = GetObserverLocation();
+    const FVector ActorLocation = GetActorLocation();
     const FRotator IdentityRot = FRotator::ZeroRotator;
+    const FRotator ActorRotation = GetActorRotation();
     if (Debug_VisiblePointsISMC)
     {
         Debug_VisiblePointsISMC->SetUsingAbsoluteLocation(true);
@@ -661,6 +844,13 @@ void ACPP_Actor__Viewshed::UpdateVisualization()
         Debug_ProceduralMeshComponent->SetWorldLocation(ObserverLoc);
         Debug_ProceduralMeshComponent->SetWorldRotation(IdentityRot);
     }
+    if (VisibleVisualization_ProceduralMeshComponent)
+    {
+        VisibleVisualization_ProceduralMeshComponent->SetUsingAbsoluteLocation(true);
+        VisibleVisualization_ProceduralMeshComponent->SetUsingAbsoluteRotation(true);
+        VisibleVisualization_ProceduralMeshComponent->SetWorldLocation(ActorLocation);
+        VisibleVisualization_ProceduralMeshComponent->SetWorldRotation(ActorRotation);
+    }
 
     // Clear existing instances from both components (defensive checks)
     if (Debug_VisiblePointsISMC)
@@ -669,6 +859,8 @@ void ACPP_Actor__Viewshed::UpdateVisualization()
         Debug_HiddenPointsISMC->ClearInstances();
     if (Debug_ProceduralMeshComponent)
         Debug_ProceduralMeshComponent->ClearAllMeshSections();
+    if (VisibleVisualization_ProceduralMeshComponent)
+        VisibleVisualization_ProceduralMeshComponent->ClearAllMeshSections();
 
     if (bDebug_ShowDebugVisualization)
     {
@@ -683,6 +875,8 @@ void ACPP_Actor__Viewshed::UpdateVisualization()
             BuildDebug_PointMesh();
         }
     }
+
+    BuildVisibleVisualization_ProceduralMergedMesh();
 }
 
 /**

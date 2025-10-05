@@ -61,6 +61,113 @@ struct P_VIEWSHEDANALYSIS_API FS__ViewShedPoint
 };
 
 /**
+ * Structure Containing Trace Start and End Point
+ */
+USTRUCT(BlueprintType)
+struct P_VIEWSHEDANALYSIS_API FS__ViewShedTracePoint
+{
+    GENERATED_BODY()
+
+    /** World position Trace Start point, Usualy ObserverLocation with Forward Offset Towards the End Point(Mainly for performance Reasons)*/
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace Point")
+    FVector TraceStart;
+
+    /** World position Trace End point, Usualy any point Within the ViewShed */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace Point")
+    FVector TraceEnd;
+
+    /** Index of the radial distance band this sample belongs to (0-based from nearest to farthest) */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace Point")
+    int32 DistanceBandIndex;
+
+    /** Index of the horizontal angular sample within the distance band (0-based left to right across FOV) */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace Point")
+    int32 HorizontalSampleIndex;
+
+    /** Index of the vertical angular sample within the distance band (0-based bottom to top across FOV) */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace Point")
+    int32 VerticalSampleIndex;
+
+    /** Whether a supporting ground probe located a surface for this sample */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace Point")
+    bool bHasGroundSupport;
+
+    /** Up-facing surface normal returned by the ground probe (ZeroVector if none) */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace Point")
+    FVector GroundNormal;
+
+    /** Default constructor - initializes all values to safe defaults */
+    FS__ViewShedTracePoint()
+    {
+        TraceStart = FVector::ZeroVector;
+        TraceEnd = FVector::ZeroVector;
+        DistanceBandIndex = INDEX_NONE;
+        HorizontalSampleIndex = INDEX_NONE;
+        VerticalSampleIndex = INDEX_NONE;
+        bHasGroundSupport = false;
+        GroundNormal = FVector::ZeroVector;
+    }
+};
+
+/**
+ * Structure Containing Trace End Points
+ */
+USTRUCT(BlueprintType)
+struct P_VIEWSHEDANALYSIS_API FS__ViewShedTraceEndPoints
+{
+    GENERATED_BODY()
+
+    /** Trace Start and End Point */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace End Point")
+    TArray<FS__ViewShedTracePoint> TraceEndPoints;
+
+    /** Number of samples along the horizontal axis within this slice */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace End Point")
+    int32 HorizontalSampleCount;
+
+    /** Number of samples along the vertical axis within this slice */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace End Point")
+    int32 VerticalSampleCount;
+
+    /** Default constructor - initializes all values to safe defaults */
+    FS__ViewShedTraceEndPoints()
+    {
+        TraceEndPoints.Empty();
+        HorizontalSampleCount = 0;
+        VerticalSampleCount = 0;
+    }
+};
+
+/**
+ * Structure Containing Trace End Points
+ */
+USTRUCT(BlueprintType)
+struct P_VIEWSHEDANALYSIS_API FS__ViewShedTraceSection
+{
+    GENERATED_BODY()
+
+    /** Trace Start and End Points */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace End Point")
+    TArray<FS__ViewShedTraceEndPoints> TraceSections;
+
+    /** Number of horizontal sub-sections that partition this distance layer */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace End Point")
+    int32 HorizontalSectionCount;
+
+    /** Number of vertical sub-sections that partition this distance layer */
+    UPROPERTY(BlueprintReadOnly, Category = "ViewShed Trace End Point")
+    int32 VerticalSectionCount;
+
+    /** Default constructor - initializes all values to safe defaults */
+    FS__ViewShedTraceSection()
+    {
+        TraceSections.Empty();
+        HorizontalSectionCount = 0;
+        VerticalSectionCount = 0;
+    }
+};
+
+/**
  * Delegate for broadcasting when viewshed analysis is complete
  * Allows other systems to react to finished analysis
  */
@@ -122,20 +229,43 @@ public:
     // SAMPLING RESOLUTION PROPERTIES
     //////////////////////////////////////////////////////////////////////////
 
-    /** Number of horizontal samples across the FOV */
+    /** This Refers to the Horizontal Size of the Sample Section.
+     *  For Example 0.2 of 90* Horizontal FOV would be equal to 18 degrees.
+     *  Sample Section Starts form Top Left and Ends at Bottom Right.
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sampling Resolution",
-              meta = (DisplayName = "Horizontal Samples", ClampMin = "3", ClampMax = "200", UIMax = "100"))
-    int32 HorizontalSamples = 20;
+              meta = (DisplayName = "Maximum Horizontal Sample Section Ratio", ClampMin = "0.1", ClampMax = "1", UIMax = "1"))
+    float Horizontal_Sample_Section_Ratio = 0.2f;
 
-    /** Number of vertical samples across the FOV */
+    /** This Refers to the Vertical Size of the Sample Section.
+     * For Example 0.4 of 60* Vertical FOV would be equal to 24 degrees.
+     * Sample Section Starts form Top Left and Ends at Bottom Right.
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sampling Resolution",
-              meta = (DisplayName = "Vertical Samples", ClampMin = "3", ClampMax = "200", UIMax = "100"))
-    int32 VerticalSamples = 15;
+              meta = (DisplayName = "Maximum Vertical Sample Section Ratio", ClampMin = "0.1", ClampMax = "1", UIMax = "1"))
+    float Vertical_Sample_Section_Ratio = 0.4f;
 
     /** Number of distance steps from observer to max distance */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sampling Resolution",
               meta = (DisplayName = "Distance Steps", ClampMin = "1", ClampMax = "50", UIMax = "20"))
     int32 DistanceSteps = 5;
+
+    /** Maximum Distance Between Samples.
+     *  At each subsequent step Distance between Samples increases.
+     *  At the Last Distance Step Distance Between Samples highest, it would be proportional to MaxDistance.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sampling Resolution",
+              meta = (DisplayName = "Maximum Distance Between Samples", ClampMin = "1", UIMax = "5000"))
+    float Maximum_Distance_Between_Samples = 500;
+
+    /** Maximum Number of Samples Per Section
+     *  if a Section too Large, this will divide the section into smaller sections
+     *  to keep the number of samples per section under this limit.
+     *  this Keeps the Sampling Section more Accurate.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sampling Resolution",
+              meta = (DisplayName = "Samples Per Section", ClampMin = "1", UIMax = "5000"))
+    int32 Minimum_Samples_Per_Section = 500;
 
     //////////////////////////////////////////////////////////////////////////
     // VISUALIZATION PROPERTIES
@@ -150,6 +280,16 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
               meta = (DisplayName = "Hidden Material"))
     UMaterialInterface *HiddenMaterial;
+
+    /** Height offset applied to the procedural blanket that visualises visible areas */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
+              meta = (DisplayName = "Visible Blanket Offset", ClampMin = "0.0", UIMax = "50.0"))
+    float VisibleVisualization_SurfaceOffset = 5.0f;
+
+    /** Half-size (in cm) of each quad stamped onto visible hit locations */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
+              meta = (DisplayName = "Visible Blanket Quad Half Size", ClampMin = "1.0", UIMax = "500.0"))
+    float VisibleVisualization_QuadHalfSize = 25.0f;
 
     /** Decal material used by HiddenVisualizationDecalComponent (Deferred Decal domain). Should implement frustum tests. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
@@ -314,6 +454,10 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     UDecalComponent *HiddenVisualizationDecalComponent;
 
+    // Procedural mesh component to Visualize Visible mesh
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    UProceduralMeshComponent *VisibleVisualization_ProceduralMeshComponent;
+
     /** Component for rendering visible point instances */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     UInstancedStaticMeshComponent *Debug_VisiblePointsISMC;
@@ -322,7 +466,7 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     UInstancedStaticMeshComponent *Debug_HiddenPointsISMC;
 
-    // Procedural mesh component to show merged mesh
+    // Procedural mesh component to show Viewshed Step merged mesh
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     UProceduralMeshComponent *Debug_ProceduralMeshComponent;
 
@@ -334,8 +478,11 @@ private:
     /** Array storing all analysis point results */
     TArray<FS__ViewShedPoint> AnalysisResults;
 
-    /** Array of world positions to trace to */
-    TArray<FVector> TraceEndpoints;
+    /** Hierarchical layout of traces organised by distance steps and FOV sub-sections */
+    TArray<FS__ViewShedTraceSection> TraceSections;
+
+    /** Flattened queue of trace start/end pairs, consumed sequentially during analysis */
+    TArray<FS__ViewShedTracePoint> TracePointQueue;
 
     /** Current state of analysis processing */
     bool bAnalysisInProgress = false;
@@ -348,6 +495,15 @@ private:
 
     /** Dynamic material instance used by the hidden visualization decal to receive runtime parameters */
     UMaterialInstanceDynamic *HiddenVisualizationDecalMID = nullptr;
+
+    /** Cached number of horizontal samples produced during the last GenerateTraceEndpoints pass */
+    int32 CachedHorizontalSampleCount = 0;
+
+    /** Cached number of distance bands (excluding the implicit origin ring) produced during the last GenerateTraceEndpoints pass */
+    int32 CachedDistanceBandCount = 0;
+
+    /** Cached number of vertical samples produced during the last GenerateTraceEndpoints pass */
+    int32 CachedVerticalSampleCount = 0;
 
     //////////////////////////////////////////////////////////////////////////
     // INTERNAL FUNCTIONS
@@ -364,6 +520,9 @@ private:
 
     /** Build Debug Procedural Merged Mesh */
     void BuildDebug_ProceduralMergedMesh();
+
+    /** Build Visible Visualization Procedural Merged Mesh */
+    void BuildVisibleVisualization_ProceduralMergedMesh();
 
     /** Update visualization based on current results */
     void UpdateVisualization();
