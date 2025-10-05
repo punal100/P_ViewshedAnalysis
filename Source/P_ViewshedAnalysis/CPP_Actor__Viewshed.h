@@ -86,10 +86,11 @@ public:
     // CORE VIEWSHED PROPERTIES
     //////////////////////////////////////////////////////////////////////////
 
-    /** Direction the viewshed is pointing (normalized automatically) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ViewShed Configuration",
-              meta = (DisplayName = "View Direction"))
-    FVector ViewDirection = FVector::ForwardVector;
+    // Punal Manalan, NOTE: View Direction is the default forward vector of the actor
+    ///** Direction the viewshed is pointing (normalized automatically) */
+    // UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ViewShed Configuration",
+    //           meta = (DisplayName = "View Direction"))
+    // FVector ViewDirection = FVector::ForwardVector;
 
     /** Maximum distance to perform analysis (in Unreal units) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ViewShed Configuration",
@@ -134,15 +135,6 @@ public:
     // VISUALIZATION PROPERTIES
     //////////////////////////////////////////////////////////////////////////
 
-    // Toggle property: use merged mesh or ISMC
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization")
-    bool bUseProceduralMesh = false;
-
-    /** Static mesh to use for visible points (sphere recommended) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
-              meta = (DisplayName = "Visible Point Mesh"))
-    UStaticMesh *VisiblePointMesh;
-
     /** Material for visible points (green recommended) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
               meta = (DisplayName = "Visible Material"))
@@ -152,21 +144,6 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
               meta = (DisplayName = "Hidden Material"))
     UMaterialInterface *HiddenMaterial;
-
-    /** Scale multiplier for visualization points */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
-              meta = (DisplayName = "Point Scale", ClampMin = "0.1", UIMax = "5.0"))
-    float PointScale = 1.0f;
-
-    /** Whether to show visible points */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
-              meta = (DisplayName = "Show Visible Points"))
-    bool bShowVisiblePoints = true;
-
-    /** Whether to show hidden/occluded points */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visualization",
-              meta = (DisplayName = "Show Hidden Points"))
-    bool bShowHiddenPoints = false;
 
     //////////////////////////////////////////////////////////////////////////
     // ANALYSIS CONTROL PROPERTIES
@@ -191,20 +168,48 @@ public:
     // DEBUG PROPERTIES
     //////////////////////////////////////////////////////////////////////////
 
+    // Toggle property: Show Debug Visualization
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization")
+    bool bDebug_ShowDebugVisualization = false;
+
+    // Toggle property: use merged mesh or ISMC
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization")
+    bool bDebug_UseProceduralMesh = false;
+
+    /** Static mesh to use for visible points (sphere recommended) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization",
+              meta = (DisplayName = "Visible Point Mesh"))
+    UStaticMesh *Debug_VisiblePointMesh;
+
+    /** Scale multiplier for visualization points */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization",
+              meta = (DisplayName = "Point Scale", ClampMin = "0.1", UIMax = "5.0"))
+    float Debug_PointScale = 1.0f;
+
+    /** Whether to show visible points */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization",
+              meta = (DisplayName = "Show Visible Points"))
+    bool bDebug_ShowVisiblePoints = true;
+
+    /** Whether to show hidden/occluded points */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DebugVisualization",
+              meta = (DisplayName = "Show Hidden Points"))
+    bool bDebug_ShowHiddenPoints = false;
+
     /** Whether to show debug lines for line traces */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization",
               meta = (DisplayName = "Show Debug Lines"))
-    bool bShowDebugLines = false;
+    bool bDebug_ShowLines = false;
 
     /** How long debug lines should persist (seconds) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization",
               meta = (DisplayName = "Debug Line Duration", ClampMin = "0.1", UIMax = "30.0"))
-    float DebugLineDuration = 5.0f;
+    float bDebug_LineDuration = 5.0f;
 
     /** Whether to show the viewshed pyramid bounds */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug Visualization",
               meta = (DisplayName = "Show Pyramid Bounds"))
-    bool bShowPyramidBounds = true;
+    bool bDebug_ShowPyramidBounds = true;
 
     //////////////////////////////////////////////////////////////////////////
     // EVENTS
@@ -253,15 +258,15 @@ protected:
 
     /** Component for rendering visible point instances */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    UInstancedStaticMeshComponent *VisiblePointsISMC;
+    UInstancedStaticMeshComponent *Debug_VisiblePointsISMC;
 
     /** Component for rendering hidden point instances */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    UInstancedStaticMeshComponent *HiddenPointsISMC;
+    UInstancedStaticMeshComponent *Debug_HiddenPointsISMC;
 
     // Procedural mesh component to show merged mesh
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    UProceduralMeshComponent *ProceduralMeshComponent;
+    UProceduralMeshComponent *Debug_ProceduralMeshComponent;
 
 private:
     //////////////////////////////////////////////////////////////////////////
@@ -293,8 +298,11 @@ private:
     /** Process a single line trace by index */
     void ProcessSingleTrace(int32 TraceIndex);
 
-    /** Build Procedural Merged Mesh */
-    void BuildProceduralMergedMesh();
+    /** Build Debug Point Mesh */
+    void BuildDebug_PointMesh();
+
+    /** Build Debug Procedural Merged Mesh */
+    void BuildDebug_ProceduralMergedMesh();
 
     /** Update visualization based on current results */
     void UpdateVisualization();

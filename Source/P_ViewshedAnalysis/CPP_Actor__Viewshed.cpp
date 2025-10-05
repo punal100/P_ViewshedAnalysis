@@ -22,59 +22,57 @@ ACPP_Actor__Viewshed::ACPP_Actor__Viewshed()
     USceneComponent *RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
     RootComponent = RootComp;
 
-    // Create Instanced Static Mesh Component for visible points
-    VisiblePointsISMC = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("VisiblePointsISMC"));
+    // Create Debug Instanced Static Mesh Component for visible points
+    Debug_VisiblePointsISMC = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("VisiblePointsISMC"));
     // Attach to root so it moves with the actor
-    VisiblePointsISMC->SetupAttachment(RootComponent);
+    Debug_VisiblePointsISMC->SetupAttachment(RootComponent);
     // Disable collision since these are just visualization
-    VisiblePointsISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Debug_VisiblePointsISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     // Disable shadows for better performance
-    VisiblePointsISMC->SetCastShadow(false);
+    Debug_VisiblePointsISMC->SetCastShadow(false);
     // Set Translation to World Absolute
-    VisiblePointsISMC->SetUsingAbsoluteLocation(true);
+    Debug_VisiblePointsISMC->SetUsingAbsoluteLocation(true);
 
-    // Create Instanced Static Mesh Component for hidden points
-    HiddenPointsISMC = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("HiddenPointsISMC"));
+    // Create Debug Instanced Static Mesh Component for hidden points
+    Debug_HiddenPointsISMC = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("HiddenPointsISMC"));
     // Attach to root so it moves with the actor
-    HiddenPointsISMC->SetupAttachment(RootComponent);
+    Debug_HiddenPointsISMC->SetupAttachment(RootComponent);
     // Disable collision since these are just visualization
-    HiddenPointsISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Debug_HiddenPointsISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     // Disable shadows for better performance
-    HiddenPointsISMC->SetCastShadow(false);
+    Debug_HiddenPointsISMC->SetCastShadow(false);
 
-    // Create procedural mesh component, attach to root
-    ProceduralMeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMeshComponent"));
-    ProceduralMeshComponent->SetupAttachment(RootComponent);
-    ProceduralMeshComponent->bUseAsyncCooking = true; // Use async cooking for performance
+    // Create Debug procedural mesh component, attach to root
+    Debug_ProceduralMeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMeshComponent"));
+    Debug_ProceduralMeshComponent->SetupAttachment(RootComponent);
+    Debug_ProceduralMeshComponent->bUseAsyncCooking = true; // Use async cooking for performance
     // Set Translation to World Absolute
-    ProceduralMeshComponent->SetUsingAbsoluteLocation(true);
+    Debug_ProceduralMeshComponent->SetUsingAbsoluteLocation(true);
 
     // Initialize default property values
-    ViewDirection = FVector::ForwardVector; // Point forward along X-axis
-    MaxDistance = 5000.0f;                  // 50 meter range
-    VerticalFOV = 60.0f;                    // 60 degree vertical view
-    HorizontalFOV = 90.0f;                  // 90 degree horizontal view
-    ObserverHeight = 150.0f;                // 1.5 meter eye height
+    // ViewDirection = FVector::ForwardVector; // Point forward along X-axis
+    MaxDistance = 5000.0f;   // 50 meter range
+    VerticalFOV = 60.0f;     // 60 degree vertical view
+    HorizontalFOV = 90.0f;   // 90 degree horizontal view
+    ObserverHeight = 150.0f; // 1.5 meter eye height
 
     // Set reasonable sampling resolution
     HorizontalSamples = 20; // 20 samples horizontally
     VerticalSamples = 15;   // 15 samples vertically
     DistanceSteps = 5;      // 5 distance layers
 
-    // Visualization defaults
-    PointScale = 1.0f;         // Normal size points
-    bShowVisiblePoints = true; // Show visible by default
-    bShowHiddenPoints = false; // Hide occluded by default
+    // Debug Visualization defaults
+    Debug_PointScale = 1.0f;         // Normal size points
+    bDebug_ShowVisiblePoints = true; // Show visible by default
+    bDebug_ShowHiddenPoints = false; // Hide occluded by default
+    bDebug_ShowLines = false;        // Debug lines off by default
+    bDebug_LineDuration = 5.0f;      // 5 second debug lines
+    bDebug_ShowPyramidBounds = true; // Show bounds by default
 
     // Analysis control defaults
     bAutoUpdate = true;     // Auto-update enabled
     UpdateInterval = 2.0f;  // Update every 2 seconds
     MaxTracesPerFrame = 50; // Max 50 traces per frame
-
-    // Debug visualization defaults
-    bShowDebugLines = false;   // Debug lines off by default
-    DebugLineDuration = 5.0f;  // 5 second debug lines
-    bShowPyramidBounds = true; // Show bounds by default
 }
 
 /**
@@ -87,32 +85,32 @@ void ACPP_Actor__Viewshed::BeginPlay()
     Super::BeginPlay();
 
     // If no mesh is assigned, try to load default sphere mesh
-    if (!VisiblePointMesh)
+    if (!Debug_VisiblePointMesh)
     {
         // Load the default engine sphere mesh for visualization
-        VisiblePointMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+        Debug_VisiblePointMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
     }
 
     // Apply the mesh to both ISMC components
-    if (VisiblePointMesh)
+    if (Debug_VisiblePointMesh)
     {
         // Set the mesh for visible points
-        VisiblePointsISMC->SetStaticMesh(VisiblePointMesh);
+        Debug_VisiblePointsISMC->SetStaticMesh(Debug_VisiblePointMesh);
         // Set the mesh for hidden points (same mesh, different material)
-        HiddenPointsISMC->SetStaticMesh(VisiblePointMesh);
+        Debug_HiddenPointsISMC->SetStaticMesh(Debug_VisiblePointMesh);
     }
 
     // Apply materials if they are assigned
     if (VisibleMaterial)
     {
         // Set material for visible points component
-        VisiblePointsISMC->SetMaterial(0, VisibleMaterial);
+        Debug_VisiblePointsISMC->SetMaterial(0, VisibleMaterial);
     }
 
     if (HiddenMaterial)
     {
         // Set material for hidden points component
-        HiddenPointsISMC->SetMaterial(0, HiddenMaterial);
+        Debug_HiddenPointsISMC->SetMaterial(0, HiddenMaterial);
     }
 
     // Start initial analysis if auto-update is enabled
@@ -134,7 +132,7 @@ void ACPP_Actor__Viewshed::Tick(float DeltaTime)
     Super::Tick(DeltaTime);
 
     // Draw debug pyramid bounds if enabled
-    if (bShowPyramidBounds)
+    if (bDebug_ShowPyramidBounds)
     {
         DrawDebugPyramid();
     }
@@ -244,11 +242,20 @@ void ACPP_Actor__Viewshed::ClearResults()
     // Clear trace endpoints array
     TraceEndpoints.Empty();
     // Clear all visible point instances
-    VisiblePointsISMC->ClearInstances();
+    if (Debug_VisiblePointsISMC)
+    {
+        Debug_VisiblePointsISMC->ClearInstances();
+    }
     // Clear all hidden point instances
-    HiddenPointsISMC->ClearInstances();
+    if (Debug_HiddenPointsISMC)
+    {
+        Debug_HiddenPointsISMC->ClearInstances();
+    }
     // Clear Procedural Mesh
-    ProceduralMeshComponent->ClearAllMeshSections();
+    if (Debug_ProceduralMeshComponent)
+    {
+        Debug_ProceduralMeshComponent->ClearAllMeshSections();
+    }
 }
 
 /**
@@ -265,11 +272,11 @@ void ACPP_Actor__Viewshed::GenerateTraceEndpoints()
 
     // Find a valid up vector for the basis.
     // If ViewDirection is close to UpVector (i.e., looking straight up or down), use ForwardVector as up instead.
-    FVector ForwardDir = ViewDirection.GetSafeNormal();
-    FVector ArbitraryUp = (FMath::Abs(ForwardDir.Z) > 0.99f) ? FVector::ForwardVector : FVector::UpVector;
-    // Create orthogonal basis vectors for the pyramid
-    FVector RightDir = FVector::CrossProduct(ForwardDir, ArbitraryUp).GetSafeNormal();
-    FVector UpDir = FVector::CrossProduct(RightDir, ForwardDir).GetSafeNormal();
+    FVector ForwardDir = GetActorForwardVector();
+    // FVector ArbitraryUp = (FMath::Abs(ForwardDir.Z) > 0.99f) ? FVector::ForwardVector : FVector::UpVector;
+    //  Create orthogonal basis vectors for the pyramid
+    FVector RightDir = GetActorRightVector();
+    FVector UpDir = GetActorUpVector();
     // Recalculate up to ensure orthogonality
     UpDir = FVector::CrossProduct(RightDir, ForwardDir).GetSafeNormal();
 
@@ -361,22 +368,74 @@ void ACPP_Actor__Viewshed::ProcessSingleTrace(int32 TraceIndex)
     }
 
     // Draw debug line if enabled
-    if (bShowDebugLines)
+    if (bDebug_ShowLines)
     {
         // Choose color based on visibility
         FColor LineColor = AnalysisResults[TraceIndex].bIsVisible ? FColor::Green : FColor::Red;
         // Draw line from observer to hit location (not necessarily endpoint)
         DrawDebugLine(GetWorld(), ObserverLoc, AnalysisResults[TraceIndex].HitLocation,
-                      LineColor, false, DebugLineDuration, 0, 2.0f);
+                      LineColor, false, bDebug_LineDuration, 0, 2.0f);
     }
 }
 
 /**
- * Build Procedural Merged Mesh
+ * Build Debug Point Mesh
  */
-void ACPP_Actor__Viewshed::BuildProceduralMergedMesh()
+void ACPP_Actor__Viewshed::
+    BuildDebug_PointMesh()
 {
-    ProceduralMeshComponent->ClearAllMeshSections();
+    // Clear existing debug points (defensive)
+    if (Debug_VisiblePointsISMC)
+    {
+        Debug_VisiblePointsISMC->ClearInstances();
+    }
+    if (Debug_HiddenPointsISMC)
+    {
+        Debug_HiddenPointsISMC->ClearInstances();
+    }
+
+    // Use instanced mesh visualization as before
+    // Process each analysis result
+    for (const FS__ViewShedPoint &Point : AnalysisResults)
+    {
+        // Create transform for this instance
+        FTransform InstanceTransform;
+        // Position at the analysis point (slightly offset upward for visibility)
+        InstanceTransform.SetLocation(Point.WorldPosition + FVector(0, 0, 10));
+        // Set uniform scale based on point scale setting
+        InstanceTransform.SetScale3D(FVector(Debug_PointScale, Debug_PointScale, Debug_PointScale));
+        // Use default rotation (no rotation needed for spheres)
+        InstanceTransform.SetRotation(FQuat::Identity);
+
+        // Add to appropriate component based on visibility and display settings
+        if (Point.bIsVisible && bDebug_ShowVisiblePoints)
+        {
+            // Add to visible points component (defensive)
+            if (Debug_VisiblePointsISMC)
+            {
+                Debug_VisiblePointsISMC->AddInstance(InstanceTransform);
+            }
+        }
+        else if (!Point.bIsVisible && bDebug_ShowHiddenPoints)
+        {
+            // Add to hidden points component (defensive)
+            if (Debug_HiddenPointsISMC)
+            {
+                Debug_HiddenPointsISMC->AddInstance(InstanceTransform);
+            }
+        }
+    }
+}
+
+/**
+ * Build Debug Procedural Merged Mesh
+ */
+void ACPP_Actor__Viewshed::BuildDebug_ProceduralMergedMesh()
+{
+    if (Debug_ProceduralMeshComponent)
+    {
+        Debug_ProceduralMeshComponent->ClearAllMeshSections();
+    }
 
     int32 H = HorizontalSamples;
     int32 V = VerticalSamples;
@@ -398,7 +457,8 @@ void ACPP_Actor__Viewshed::BuildProceduralMergedMesh()
         TArray<FProcMeshTangent> TgtVis, TgtHid;
 
         int32 base = step * NumPointsPerStep;
-        FVector normal = ViewDirection.GetSafeNormal();
+        // Use actor forward as the surface normal basis for procedural faces
+        FVector normal = GetActorForwardVector().GetSafeNormal();
 
         for (int32 v = 0; v < V - 1; ++v)
         {
@@ -409,10 +469,10 @@ void ACPP_Actor__Viewshed::BuildProceduralMergedMesh()
                 int idx10 = base + (v + 1) * H + h;
                 int idx11 = base + (v + 1) * H + h + 1;
 
-                const auto& p00 = AnalysisResults[idx00];
-                const auto& p01 = AnalysisResults[idx01];
-                const auto& p10 = AnalysisResults[idx10];
-                const auto& p11 = AnalysisResults[idx11];
+                const auto &p00 = AnalysisResults[idx00];
+                const auto &p01 = AnalysisResults[idx01];
+                const auto &p10 = AnalysisResults[idx10];
+                const auto &p11 = AnalysisResults[idx11];
 
                 bool vis00 = p00.bIsVisible, vis01 = p01.bIsVisible, vis10 = p10.bIsVisible, vis11 = p11.bIsVisible;
 
@@ -420,51 +480,94 @@ void ACPP_Actor__Viewshed::BuildProceduralMergedMesh()
                 if ((vis00 && vis01 && vis10 && vis11) || (!vis00 && !vis01 && !vis10 && !vis11))
                 {
                     bool isVisible = vis00; // all must match, so pick one
-                    TArray<FVector>& VertArray = isVisible ? VertVis : VertHid;
-                    TArray<int32>& TrisArray = isVisible ? TrisVis : TrisHid;
-                    TArray<FVector>& NormArray = isVisible ? NormVis : NormHid;
-                    TArray<FLinearColor>& ColArray = isVisible ? ColVis : ColHid;
-                    TArray<FVector2D>& UVArray = isVisible ? UVVis : UVHid;
-                    TArray<FProcMeshTangent>& TgtArray = isVisible ? TgtVis : TgtHid;
+                    TArray<FVector> &VertArray = isVisible ? VertVis : VertHid;
+                    TArray<int32> &TrisArray = isVisible ? TrisVis : TrisHid;
+                    TArray<FVector> &NormArray = isVisible ? NormVis : NormHid;
+                    TArray<FLinearColor> &ColArray = isVisible ? ColVis : ColHid;
+                    TArray<FVector2D> &UVArray = isVisible ? UVVis : UVHid;
+                    TArray<FProcMeshTangent> &TgtArray = isVisible ? TgtVis : TgtHid;
 
                     // ------- FRONT FACE -------
                     int vi = VertArray.Num();
-                    VertArray.Add(p00.WorldPosition);    NormArray.Add(normal);  ColArray.Add(FLinearColor::Green); UVArray.Add(FVector2D((float)h / (H - 1), (float)v / (V - 1)));        TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p10.WorldPosition);    NormArray.Add(normal);  ColArray.Add(FLinearColor::Green); UVArray.Add(FVector2D((float)h / (H - 1), (float)(v + 1) / (V - 1)));  TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p01.WorldPosition);    NormArray.Add(normal);  ColArray.Add(FLinearColor::Green); UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)v / (V - 1)));  TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p11.WorldPosition);    NormArray.Add(normal);  ColArray.Add(FLinearColor::Green); UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)(v + 1) / (V - 1))); TgtArray.Add(FProcMeshTangent());
+                    VertArray.Add(p00.WorldPosition);
+                    NormArray.Add(normal);
+                    ColArray.Add(FLinearColor::Green);
+                    UVArray.Add(FVector2D((float)h / (H - 1), (float)v / (V - 1)));
+                    TgtArray.Add(FProcMeshTangent());
+                    VertArray.Add(p10.WorldPosition);
+                    NormArray.Add(normal);
+                    ColArray.Add(FLinearColor::Green);
+                    UVArray.Add(FVector2D((float)h / (H - 1), (float)(v + 1) / (V - 1)));
+                    TgtArray.Add(FProcMeshTangent());
+                    VertArray.Add(p01.WorldPosition);
+                    NormArray.Add(normal);
+                    ColArray.Add(FLinearColor::Green);
+                    UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)v / (V - 1)));
+                    TgtArray.Add(FProcMeshTangent());
+                    VertArray.Add(p11.WorldPosition);
+                    NormArray.Add(normal);
+                    ColArray.Add(FLinearColor::Green);
+                    UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)(v + 1) / (V - 1)));
+                    TgtArray.Add(FProcMeshTangent());
 
                     // Two triangles for front face
-                    TrisArray.Add(vi + 0); TrisArray.Add(vi + 1); TrisArray.Add(vi + 2);
-                    TrisArray.Add(vi + 2); TrisArray.Add(vi + 1); TrisArray.Add(vi + 3);
+                    TrisArray.Add(vi + 0);
+                    TrisArray.Add(vi + 1);
+                    TrisArray.Add(vi + 2);
+                    TrisArray.Add(vi + 2);
+                    TrisArray.Add(vi + 1);
+                    TrisArray.Add(vi + 3);
 
                     // ------- BACK FACE -------
                     int vj = VertArray.Num();
-                    VertArray.Add(p00.WorldPosition);    NormArray.Add(-normal); ColArray.Add(FLinearColor::Green); UVArray.Add(FVector2D((float)h / (H - 1), (float)v / (V - 1)));        TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p10.WorldPosition);    NormArray.Add(-normal); ColArray.Add(FLinearColor::Green); UVArray.Add(FVector2D((float)h / (H - 1), (float)(v + 1) / (V - 1)));  TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p01.WorldPosition);    NormArray.Add(-normal); ColArray.Add(FLinearColor::Green); UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)v / (V - 1)));  TgtArray.Add(FProcMeshTangent());
-                    VertArray.Add(p11.WorldPosition);    NormArray.Add(-normal); ColArray.Add(FLinearColor::Green); UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)(v + 1) / (V - 1))); TgtArray.Add(FProcMeshTangent());
+                    VertArray.Add(p00.WorldPosition);
+                    NormArray.Add(-normal);
+                    ColArray.Add(FLinearColor::Green);
+                    UVArray.Add(FVector2D((float)h / (H - 1), (float)v / (V - 1)));
+                    TgtArray.Add(FProcMeshTangent());
+                    VertArray.Add(p10.WorldPosition);
+                    NormArray.Add(-normal);
+                    ColArray.Add(FLinearColor::Green);
+                    UVArray.Add(FVector2D((float)h / (H - 1), (float)(v + 1) / (V - 1)));
+                    TgtArray.Add(FProcMeshTangent());
+                    VertArray.Add(p01.WorldPosition);
+                    NormArray.Add(-normal);
+                    ColArray.Add(FLinearColor::Green);
+                    UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)v / (V - 1)));
+                    TgtArray.Add(FProcMeshTangent());
+                    VertArray.Add(p11.WorldPosition);
+                    NormArray.Add(-normal);
+                    ColArray.Add(FLinearColor::Green);
+                    UVArray.Add(FVector2D((float)(h + 1) / (H - 1), (float)(v + 1) / (V - 1)));
+                    TgtArray.Add(FProcMeshTangent());
 
                     // Two triangles for back face (reverse winding order)
-                    TrisArray.Add(vj + 2); TrisArray.Add(vj + 1); TrisArray.Add(vj + 0);
-                    TrisArray.Add(vj + 2); TrisArray.Add(vj + 3); TrisArray.Add(vj + 1);
+                    TrisArray.Add(vj + 2);
+                    TrisArray.Add(vj + 1);
+                    TrisArray.Add(vj + 0);
+                    TrisArray.Add(vj + 2);
+                    TrisArray.Add(vj + 3);
+                    TrisArray.Add(vj + 1);
                 }
                 // (Optional: add mixed quad handling here if required)
             }
         }
 
-        // Create mesh sections for visible and hidden
-        ProceduralMeshComponent->CreateMeshSection_LinearColor(
-            SectionIdx, VertVis, TrisVis, NormVis, UVVis, {}, {}, {}, ColVis, TgtVis, false, false); // Use single-sided flag, as manual double sided
+        // Create mesh sections for visible and hidden using debug procedural component
+        if (Debug_ProceduralMeshComponent)
+        {
+            Debug_ProceduralMeshComponent->CreateMeshSection_LinearColor(
+                SectionIdx, VertVis, TrisVis, NormVis, UVVis, {}, {}, {}, ColVis, TgtVis, false, false); // Use single-sided flag, as manual double sided
 
-        if (VisibleMaterial)
-            ProceduralMeshComponent->SetMaterial(SectionIdx, VisibleMaterial);
+            if (VisibleMaterial)
+                Debug_ProceduralMeshComponent->SetMaterial(SectionIdx, VisibleMaterial);
 
-        ProceduralMeshComponent->CreateMeshSection_LinearColor(
-            SectionIdx + 1, VertHid, TrisHid, NormHid, UVHid, {}, {}, {}, ColHid, TgtHid, false, false); // Use single-sided flag
+            Debug_ProceduralMeshComponent->CreateMeshSection_LinearColor(
+                SectionIdx + 1, VertHid, TrisHid, NormHid, UVHid, {}, {}, {}, ColHid, TgtHid, false, false); // Use single-sided flag
 
-        if (HiddenMaterial)
-            ProceduralMeshComponent->SetMaterial(SectionIdx + 1, HiddenMaterial);
+            if (HiddenMaterial)
+                Debug_ProceduralMeshComponent->SetMaterial(SectionIdx + 1, HiddenMaterial);
+        }
 
         SectionIdx += 2; // two sections per step
     }
@@ -476,42 +579,25 @@ void ACPP_Actor__Viewshed::BuildProceduralMergedMesh()
  */
 void ACPP_Actor__Viewshed::UpdateVisualization()
 {
-    // Clear existing instances from both components
-    VisiblePointsISMC->ClearInstances();
-    HiddenPointsISMC->ClearInstances();
-    ProceduralMeshComponent->ClearAllMeshSections();
+    // Clear existing instances from both components (defensive checks)
+    if (Debug_VisiblePointsISMC)
+        Debug_VisiblePointsISMC->ClearInstances();
+    if (Debug_HiddenPointsISMC)
+        Debug_HiddenPointsISMC->ClearInstances();
+    if (Debug_ProceduralMeshComponent)
+        Debug_ProceduralMeshComponent->ClearAllMeshSections();
 
-    if (bUseProceduralMesh)
+    if (bDebug_ShowDebugVisualization)
     {
-        // Build and update the merged procedural mesh from current points
-        BuildProceduralMergedMesh();
-    }
-    else
-    {
-        // Use instanced mesh visualization as before
-        // Process each analysis result
-        for (const FS__ViewShedPoint &Point : AnalysisResults)
+        if (bDebug_UseProceduralMesh)
         {
-            // Create transform for this instance
-            FTransform InstanceTransform;
-            // Position at the analysis point (slightly offset upward for visibility)
-            InstanceTransform.SetLocation(Point.WorldPosition + FVector(0, 0, 10));
-            // Set scale based on point scale setting
-            InstanceTransform.SetScale3D(FVector(PointScale));
-            // Use default rotation (no rotation needed for spheres)
-            InstanceTransform.SetRotation(FQuat::Identity);
-
-            // Add to appropriate component based on visibility and display settings
-            if (Point.bIsVisible && bShowVisiblePoints)
-            {
-                // Add to visible points component
-                VisiblePointsISMC->AddInstance(InstanceTransform);
-            }
-            else if (!Point.bIsVisible && bShowHiddenPoints)
-            {
-                // Add to hidden points component
-                HiddenPointsISMC->AddInstance(InstanceTransform);
-            }
+            // Build and update the merged procedural mesh from current points
+            BuildDebug_ProceduralMergedMesh();
+        }
+        else
+        {
+            // Build and update the point mesh from current points
+            BuildDebug_PointMesh();
         }
     }
 }
@@ -540,11 +626,11 @@ void ACPP_Actor__Viewshed::DrawDebugPyramid() const
     FVector ObserverLoc = GetObserverLocation();
     // Find a valid up vector for the basis.
     // If ViewDirection is close to UpVector (i.e., looking straight up or down), use ForwardVector as up instead.
-    FVector ForwardDir = ViewDirection.GetSafeNormal();
-    FVector ArbitraryUp = (FMath::Abs(ForwardDir.Z) > 0.99f) ? FVector::ForwardVector : FVector::UpVector;
-    // Create orthogonal basis vectors for the pyramid
-    FVector RightDir = FVector::CrossProduct(ForwardDir, ArbitraryUp).GetSafeNormal();
-    FVector UpDir = FVector::CrossProduct(RightDir, ForwardDir).GetSafeNormal();
+    FVector ForwardDir = GetActorForwardVector();
+    // FVector ArbitraryUp = (FMath::Abs(ForwardDir.Z) > 0.99f) ? FVector::ForwardVector : FVector::UpVector;
+    //  Create orthogonal basis vectors for the pyramid
+    FVector RightDir = GetActorRightVector();
+    FVector UpDir = GetActorUpVector();
 
     // Convert FOV to radians
     float HalfVertRad = FMath::DegreesToRadians(VerticalFOV * 0.5f);
@@ -592,11 +678,11 @@ FVector ACPP_Actor__Viewshed::CalculateDirectionFromAngles(float HorizontalAngle
     // Always use a robust basis:
     // Find a valid up vector for the basis.
     // If ViewDirection is close to UpVector (i.e., looking straight up or down), use ForwardVector as up instead.
-    FVector ForwardDir = ViewDirection.GetSafeNormal();
-    FVector ArbitraryUp = (FMath::Abs(ForwardDir.Z) > 0.99f) ? FVector::ForwardVector : FVector::UpVector;
-    // Create orthogonal basis vectors for the pyramid
-    FVector RightDir = FVector::CrossProduct(ForwardDir, ArbitraryUp).GetSafeNormal();
-    FVector UpDir = FVector::CrossProduct(RightDir, ForwardDir).GetSafeNormal();
+    FVector ForwardDir = GetActorForwardVector();
+    // FVector ArbitraryUp = (FMath::Abs(ForwardDir.Z) > 0.99f) ? FVector::ForwardVector : FVector::UpVector;
+    //  Create orthogonal basis vectors for the pyramid
+    FVector RightDir = GetActorRightVector();
+    FVector UpDir = GetActorUpVector();
 
     // Start from Forward, rotate horizontally around Up (yaw), then vertically around Right (pitch)
     FVector Direction = ForwardDir;
